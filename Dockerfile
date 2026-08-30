@@ -7,7 +7,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# CPU wheel first. A default PyPI torch install pulls CUDA/nvidia-* (several GB).
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# only-if-needed keeps the CPU torch already installed so sentence-transformers
+# cannot replace it with the CUDA build from PyPI.
+RUN pip install --no-cache-dir --upgrade-strategy only-if-needed -r requirements.txt \
+    && python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__"
 
 COPY app ./app
 

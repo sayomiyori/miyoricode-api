@@ -6,6 +6,9 @@ httpx>=0.27.0
 redis>=5.2.0
 slowapi>=0.1.9
 limits>=3.13.0
+# torch is installed separately as the CPU wheel in the Dockerfile
+# (https://download.pytorch.org/whl/cpu). Do not pin torch from PyPI —
+# that pull includes CUDA/nvidia-* packages unused on CPU-only hosts.
 sentence-transformers>=3.3.0
 faiss-cpu>=1.9.0
 numpy>=1.26.0
