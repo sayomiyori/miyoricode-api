@@ -220,12 +220,14 @@ Direct `check_message` extras beyond `KNOWN_MISSES`:
 
 ## Three LOW items (LOW-1 and LOW-3 closed 2026-08-30; LOW-2 still open)
 
+**Code pin:** LOW-1 and LOW-3 are closed in commit [`310378d`](https://github.com/sayomiyori/miyoricode-api/commit/310378d03dea1696f2c9f3b777eb1c14ac5122f4) (`310378d03dea1696f2c9f3b777eb1c14ac5122f4`, `main`). A follow-up docs-only commit on this file records that hash; it does not change runtime code.
+
 Previous audit left defense-in-depth items. Live pass **confirmed** they were still true before this hardening pass (headers and cookie flags measured on a live 200).
 
 ### LOW-1 — Missing security headers — **CLOSED**
 
 - **Category:** Config
-- **Closed in:** `app/main.py` `SecurityHeadersMiddleware` (ASGI wrapper added last in `create_app`, so it sits outside CORS). Tests: `test_health_does_not_500`, `test_security_headers_do_not_clobber_cors`.
+- **Closed in:** [`310378d`](https://github.com/sayomiyori/miyoricode-api/commit/310378d03dea1696f2c9f3b777eb1c14ac5122f4) — `app/main.py` `SecurityHeadersMiddleware` (ASGI wrapper added last in `create_app`, so it sits outside CORS). Tests: `test_health_does_not_500`, `test_security_headers_do_not_clobber_cors`.
 - **Issue (was):** Clickjacking / MIME sniffing / missing HSTS on a future HTTPS deploy. JSON API, so XSS surface is small.
 - **Change:** Every HTTP response now gets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`. CORS `Access-Control-*` headers are not modified. CSP / HSTS left out (no HTML surface; HSTS only behind TLS — same class as LOW-2).
 
@@ -239,7 +241,7 @@ Previous audit left defense-in-depth items. Live pass **confirmed** they were st
 ### LOW-3 — Client-chosen `session_id` and unbounded `message` — **CLOSED**
 
 - **Category:** Validation / Auth
-- **Closed in:** `app/routes/chat.py` (`ChatRequest`, `_canonical_session_uuid`, `_resolve_session_id`). Tests: `test_message_too_long_is_declined`, `test_empty_message_is_rejected`, `test_anomalous_message_payload_is_rejected`, `test_arbitrary_session_id_is_replaced_with_uuid4`, `test_valid_uuid4_session_id_is_accepted`.
+- **Closed in:** [`310378d`](https://github.com/sayomiyori/miyoricode-api/commit/310378d03dea1696f2c9f3b777eb1c14ac5122f4) — `app/routes/chat.py` (`ChatRequest`, `_canonical_session_uuid`, `_resolve_session_id`). Tests: `test_message_too_long_is_declined`, `test_empty_message_is_rejected`, `test_anomalous_message_payload_is_rejected`, `test_arbitrary_session_id_is_replaced_with_uuid4`, `test_valid_uuid4_session_id_is_accepted`.
 - **Issue (was):** Anyone who knows/guesses an id can read/append that Redis history. A huge JSON body is parsed before the limiter/heuristic. Public placeholder chat, no accounts — impact is low.
 - **Change:**
   - `message`: `Field(min_length=1, max_length=5000)`. Product cap stays 1500 in `heuristic_filter` so over-length chat still returns **200 + `fallback_declined`** (frontend contract). Pydantic 5000 is only a hard reject of anomalous payloads (**422**).
@@ -252,9 +254,10 @@ None of LOW-1…3 was a fail of the three spec zones. LOW-2 remains the only ope
 
 # Security Audit Report
 
-**Project:** NewGenSayomi-api (`d:\Programming\NewGenSayomi-api`)
+**Project:** Miyori Code API (`miyoricode-api`)
 **Date:** 2026-08-30
 **Scope:** `app/`, `scripts/`, `tests/`, `docker-compose.yml`, `Dockerfile`, `.env.example`, `.gitignore`. Live Redis + throwaway uvicorn. Developer `.env` keys not copied or printed.
+**Pinned commit:** [`310378d03dea1696f2c9f3b777eb1c14ac5122f4`](https://github.com/sayomiyori/miyoricode-api/commit/310378d03dea1696f2c9f3b777eb1c14ac5122f4)
 
 ## Summary scorecard
 
