@@ -1,0 +1,31 @@
+# env
+.env
+.env*.local
+
+# python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# huggingface / local dumps (not FAISS index — we do not persist the index)
+.cache/
+*.pt
+*.bin
+
+# ide / os
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# docker
+*.log
