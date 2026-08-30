@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.tools.project_media import PROJECT_MEDIA, ProjectMedia
+from app.tools.project_media import PROJECT_CAROUSEL, PROJECT_MEDIA, ProjectMedia
 
 KB_DIR = Path(__file__).resolve().parent.parent / "rag" / "knowledge_base"
 
@@ -94,6 +94,23 @@ def _attachments_payload(project: ProjectMedia) -> dict[str, Any]:
     }
 
 
+def _carousel_payload() -> dict[str, Any]:
+    return {
+        "type": "project_carousel",
+        "items": [
+            {
+                "id": item.id,
+                "title": item.title,
+                "category": item.category,
+                "cover_image": item.cover_image,
+                "cover_gradient": list(item.cover_gradient) if item.cover_gradient else None,
+                "link": item.link,
+            }
+            for item in PROJECT_CAROUSEL
+        ],
+    }
+
+
 def match_attachments(message: str) -> dict[str, Any] | None:
     """Overlay after the text reply is chosen.
 
@@ -107,6 +124,20 @@ def match_attachments(message: str) -> dict[str, Any] | None:
         if pattern.search(message):
             return _attachments_payload(PROJECT_MEDIA[key])
     return None
+
+
+def match_project_carousel(message: str) -> dict[str, Any] | None:
+    """Carousel for the general Projects shortcut only.
+
+    Never overlaps with attachments: a named project (Velox, SaaSAiMenu, …)
+    skips the carousel and keeps the existing per-project overlay.
+    """
+    structured = match_structured(message)
+    if structured is None or structured.category != "projects":
+        return None
+    if match_attachments(message) is not None:
+        return None
+    return _carousel_payload()
 
 
 def match_structured(message: str) -> StructuredMatch | None:

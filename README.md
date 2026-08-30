@@ -70,6 +70,19 @@ docker compose up --build
   "reply": "...",
   "session_id": "uuid4",
   "source": "structured" | "rag" | "fallback_declined",
+  "card": {
+    "type": "project_carousel",
+    "items": [
+      {
+        "id": "velox",
+        "title": "Velox",
+        "category": "AI Product",
+        "cover_image": "/projects/velox/dashboard-overview.png",
+        "cover_gradient": null,
+        "link": "https://velox-rag-lending.vercel.app"
+      }
+    ]
+  } | null,
   "attachments": {
     "link": "https://…",
     "images": [{ "url": "/projects/velox/….png", "frame": "phone" | "browser", "alt": "…" }]
@@ -77,13 +90,17 @@ docker compose up --build
 }
 ```
 
-`attachments` is filled only when the **user message** names a project that has media in `app/tools/project_media.py` (currently Velox / велокс). A general Projects shortcut stays `null` even though the markdown mentions Velox. Image `url` values are frontend-relative paths; this API does not host the files.
+`card` and `attachments` are mutually exclusive overlays:
+
+- `card` (`project_carousel`, all six projects) is filled only for the **general Projects shortcut** (`Tell me about your projects` / `расскажи о проектах`). Text reply stays as before.
+- `attachments` is filled only when the **user message** names a project that has media in `app/tools/project_media.py` (currently Velox / велокс). Image `url` values are frontend-relative paths; this API does not host the files.
+- A named project (`Velox`, `SaaSAiMenu`, …) never gets the carousel. `fallback_declined` and 429 always send both as `null`.
 
 - `message`: 1–5000 characters at the request boundary. Product length is still **1500** in the heuristic — over that the chat stays **200** with `fallback_declined` so the UI can render a line, not a validation error.
 - `session_id`: UUID4 from the client is kept; anything else is dropped and the server issues a new id. Same rule for the cookie. Redis keys are never arbitrary strings.
 - Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` off locally (`COOKIE_SECURE=false`).
 
-Rate-limit 429s still return JSON `{ reply, session_id, source, attachments }` so the frontend can show them as a chat bubble.
+Rate-limit 429s still return JSON `{ reply, session_id, source, card, attachments }` so the frontend can show them as a chat bubble.
 
 ## Guardrails
 

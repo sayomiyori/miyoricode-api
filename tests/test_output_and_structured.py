@@ -1,7 +1,11 @@
 from app.config import Settings
 from app.guardrail.output_filter import filter_output
 from app.guardrail.system_prompt import CANARY
-from app.tools.structured_answers import match_attachments, match_structured
+from app.tools.structured_answers import (
+    match_attachments,
+    match_project_carousel,
+    match_structured,
+)
 
 
 def test_output_filter_catches_canary():
@@ -128,3 +132,68 @@ def test_attachments_null_for_general_projects_and_other_work():
     assert match_attachments("расскажи про SaaSAiMenu") is None
     assert match_attachments("what is Maitre / AI-CHAINA?") is None
     assert match_attachments("veloxian training plan") is None
+
+
+_CAROUSEL_IDS = (
+    "velox",
+    "saasaimenu",
+    "ai-chaina",
+    "amocrm",
+    "hh-bot",
+    "video-autoposting",
+)
+_CAROUSEL_TITLES = (
+    "Velox",
+    "SaaSAiMenu",
+    "AI-CHAINA",
+    "amoCRM Automations",
+    "hh.ru Job Bot",
+    "Video Autoposting",
+)
+_CAROUSEL_CATEGORIES = (
+    "AI Product",
+    "SaaS Platform",
+    "Automation",
+    "CRM Integration",
+    "Job Automation",
+    "Automation Tool",
+)
+
+
+def _assert_project_carousel(payload: dict) -> None:
+    assert payload["type"] == "project_carousel"
+    items = payload["items"]
+    assert len(items) == 6
+    assert [item["id"] for item in items] == list(_CAROUSEL_IDS)
+    assert [item["title"] for item in items] == list(_CAROUSEL_TITLES)
+    assert [item["category"] for item in items] == list(_CAROUSEL_CATEGORIES)
+    velox = items[0]
+    assert velox["cover_image"] == "/projects/velox/dashboard-overview.png"
+    assert velox["cover_gradient"] is None
+    assert velox["link"] == "https://velox-rag-lending.vercel.app"
+    saas = items[1]
+    assert saas["cover_image"] is None
+    assert saas["cover_gradient"] == ["#4c6ef5", "#3ecf8e"]
+    assert saas["link"] is None
+
+
+def test_carousel_on_general_projects_shortcut():
+    for message in (
+        "Tell me about your projects",
+        "расскажи о проектах",
+        "projects",
+        "проекты",
+    ):
+        payload = match_project_carousel(message)
+        assert payload is not None, message
+        _assert_project_carousel(payload)
+
+
+def test_carousel_null_for_named_project_and_freeform():
+    assert match_project_carousel("Tell me about Velox") is None
+    assert match_project_carousel("tell me about Velox") is None
+    assert match_project_carousel("Tell me about SaaSAiMenu") is None
+    assert match_project_carousel("расскажи про SaaSAiMenu") is None
+    assert match_project_carousel("расскажи про Velox") is None
+    assert match_project_carousel("how did you design the RAG chunk overlap?") is None
+    assert match_project_carousel("skills") is None

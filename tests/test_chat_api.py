@@ -86,6 +86,7 @@ def test_injection_is_declined_without_calling_llm(client: TestClient, cascade: 
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "fallback_declined"
+    assert body["card"] is None
     assert body["attachments"] is None
     assert cascade.calls == []
     assert "session_id" in body
@@ -101,6 +102,7 @@ def test_projects_shortcut_is_structured(client: TestClient, cascade: FakeCascad
     body = response.json()
     assert body["source"] == "structured"
     assert body["attachments"] is None
+    _assert_project_carousel(body["card"])
     assert cascade.calls
     knowledge = cascade.calls[0][1]["content"]
     assert "Velox" in knowledge
@@ -146,6 +148,7 @@ def test_rate_limit_returns_json_body(client: TestClient):
     assert "reply" in body
     assert body["source"] == "fallback_declined"
     assert last.headers.get("retry-after")
+    assert body["card"] is None
     assert body["attachments"] is None
 
 
@@ -156,7 +159,10 @@ def test_message_too_long_is_declined(client: TestClient, cascade: FakeCascade):
         json={"message": "x" * 1501, "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    assert response.json()["source"] == "fallback_declined"
+    body = response.json()
+    assert body["source"] == "fallback_declined"
+    assert body["card"] is None
+    assert body["attachments"] is None
     assert cascade.calls == []
     _assert_security_headers(response)
 
@@ -243,6 +249,36 @@ def test_security_headers_do_not_clobber_cors(client: TestClient):
     _assert_security_headers(denied)
 
 
+def _assert_project_carousel(card: dict) -> None:
+    assert card["type"] == "project_carousel"
+    items = card["items"]
+    assert len(items) == 6
+    assert [item["id"] for item in items] == [
+        "velox",
+        "saasaimenu",
+        "ai-chaina",
+        "amocrm",
+        "hh-bot",
+        "video-autoposting",
+    ]
+    assert [item["title"] for item in items] == [
+        "Velox",
+        "SaaSAiMenu",
+        "AI-CHAINA",
+        "amoCRM Automations",
+        "hh.ru Job Bot",
+        "Video Autoposting",
+    ]
+    assert [item["category"] for item in items] == [
+        "AI Product",
+        "SaaS Platform",
+        "Automation",
+        "CRM Integration",
+        "Job Automation",
+        "Automation Tool",
+    ]
+
+
 def _assert_velox_chat_attachments(attachments: dict) -> None:
     assert attachments["link"] == "https://velox-rag-lending.vercel.app"
     assert len(attachments["images"]) == 4
@@ -264,6 +300,7 @@ def test_velox_question_returns_attachments(client: TestClient):
     body = response.json()
     assert body["source"] == "rag"
     assert body["reply"]
+    assert body["card"] is None
     _assert_velox_chat_attachments(body["attachments"])
 
 
@@ -275,10 +312,11 @@ def test_velox_russian_question_returns_attachments(client: TestClient):
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "rag"
+    assert body["card"] is None
     _assert_velox_chat_attachments(body["attachments"])
 
 
-def test_general_projects_question_has_no_attachments(client: TestClient):
+def test_general_projects_question_returns_carousel(client: TestClient):
     response = client.post(
         "/chat",
         json={"message": "расскажи о проектах", "lang": "ru", "session_id": None},
@@ -286,21 +324,39 @@ def test_general_projects_question_has_no_attachments(client: TestClient):
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "structured"
+    assert body["reply"]
     assert body["attachments"] is None
+    _assert_project_carousel(body["card"])
 
 
-def test_other_project_question_has_no_attachments(client: TestClient):
+def test_velox_question_has_no_carousel(client: TestClient):
     response = client.post(
         "/chat",
-        json={"message": "расскажи про SaaSAiMenu", "lang": "ru", "session_id": None},
+        json={"message": "Tell me about Velox", "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "rag"
+    assert body["card"] is None
+    _assert_velox_chat_attachments(body["attachments"])
+
+
+def test_other_project_question_has_no_card_or_attachments(client: TestClient):
+    response = client.post(
+        "/chat",
+        json={"message": "Tell me about SaaSAiMenu", "lang": "en", "session_id": None},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "rag"
+    assert body["reply"]
+    assert body["card"] is None
     assert body["attachments"] is None
 
 
-def test_declined_velox_injection_has_no_attachments(client: TestClient, cascade: FakeCascade):
+def test_declined_velox_injection_has_no_card_or_attachments(
+    client: TestClient, cascade: FakeCascade
+):
     response = client.post(
         "/chat",
         json={
@@ -312,5 +368,6 @@ def test_declined_velox_injection_has_no_attachments(client: TestClient, cascade
     assert response.status_code == 200
     body = response.json()
     assert body["source"] == "fallback_declined"
+    assert body["card"] is None
     assert body["attachments"] is None
     assert cascade.calls == []

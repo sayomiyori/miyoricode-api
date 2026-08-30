@@ -27,6 +27,69 @@ class ProjectMedia:
     images: tuple[MediaImage, ...]
 
 
+@dataclass(frozen=True)
+class CarouselItem:
+    id: str
+    title: str
+    category: str
+    cover_image: str | None
+    cover_gradient: tuple[str, str] | None
+    link: str | None
+
+
+# General Projects shortcut only. Mutually exclusive with PROJECT_MEDIA attachments.
+PROJECT_CAROUSEL: tuple[CarouselItem, ...] = (
+    CarouselItem(
+        id="velox",
+        title="Velox",
+        category="AI Product",
+        cover_image="/projects/velox/dashboard-overview.png",
+        cover_gradient=None,
+        link="https://velox-rag-lending.vercel.app",
+    ),
+    CarouselItem(
+        id="saasaimenu",
+        title="SaaSAiMenu",
+        category="SaaS Platform",
+        cover_image=None,
+        cover_gradient=("#4c6ef5", "#3ecf8e"),
+        link=None,
+    ),
+    CarouselItem(
+        id="ai-chaina",
+        title="AI-CHAINA",
+        category="Automation",
+        cover_image=None,
+        cover_gradient=("#ff6ec7", "#ff9f43"),
+        link=None,
+    ),
+    CarouselItem(
+        id="amocrm",
+        title="amoCRM Automations",
+        category="CRM Integration",
+        cover_image=None,
+        cover_gradient=("#3ecf8e", "#4c6ef5"),
+        link=None,
+    ),
+    CarouselItem(
+        id="hh-bot",
+        title="hh.ru Job Bot",
+        category="Job Automation",
+        cover_image=None,
+        cover_gradient=("#ff9f43", "#ff6ec7"),
+        link=None,
+    ),
+    CarouselItem(
+        id="video-autoposting",
+        title="Video Autoposting",
+        category="Automation Tool",
+        cover_image=None,
+        cover_gradient=("#4c6ef5", "#ff6ec7"),
+        link=None,
+    ),
+)
+
+
 # Only projects listed here can produce a non-null attachments payload.
 PROJECT_MEDIA: dict[str, ProjectMedia] = {
     "velox": ProjectMedia(

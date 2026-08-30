@@ -18,7 +18,11 @@ from app.limiter import limiter
 from app.llm.cascade import LLMCascade
 from app.rag.retriever import Retriever
 from app.session.store import SessionStore
-from app.tools.structured_answers import match_attachments, match_structured
+from app.tools.structured_answers import (
+    match_attachments,
+    match_project_carousel,
+    match_structured,
+)
 
 router = APIRouter()
 settings_for_limits = get_settings()
@@ -45,10 +49,25 @@ class ChatAttachments(BaseModel):
     images: list[AttachmentImage] | None = None
 
 
+class CarouselItem(BaseModel):
+    id: str
+    title: str
+    category: str
+    cover_image: str | None = None
+    cover_gradient: list[str] | None = None
+    link: str | None = None
+
+
+class ChatCard(BaseModel):
+    type: Literal["project_carousel"]
+    items: list[CarouselItem]
+
+
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
     source: Literal["structured", "rag", "fallback_declined"]
+    card: ChatCard | None = None
     attachments: ChatAttachments | None = None
 
 
@@ -60,11 +79,14 @@ def _chat_response(
     message: str,
     declined: bool = False,
 ) -> ChatResponse:
+    # Carousel (all projects) and Velox attachments never ship together.
     attachments = None if declined else match_attachments(message)
+    card = None if declined or attachments is not None else match_project_carousel(message)
     return ChatResponse(
         reply=reply,
         session_id=session_id,
         source=source,
+        card=card,
         attachments=attachments,
     )
 
