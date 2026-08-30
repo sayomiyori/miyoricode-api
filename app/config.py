@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     )
 
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "openai/gpt-oss-20b"
     openrouter_api_key: str = ""
     openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     redis_url: str = "redis://localhost:6379/0"
@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     api_port: int = 8000
     developer_name_en: str = "Matvey"
     developer_name_ru: str = "Матвей"
-    contact_placeholder: str = "[PLACEHOLDER contact — replace with real content]"
+    contact_placeholder: str = "Telegram: @cons3qu3nc3s"
     embedding_model: str = "all-MiniLM-L6-v2"
-    llm_timeout_seconds: float = 10.0
+    llm_timeout_seconds: float = 25.0
     retrieve_k: int = 4
     session_history_limit: int = 6
     max_message_chars: int = 1500

@@ -1,11 +1,14 @@
-# FAQ
+# Частые вопросы
 
-> PLACEHOLDER — replace with real content.
+**Готов ли к переезду?** Да.
 
-## Placeholder availability
+**Формат работы?** Предпочитаю удалёнку, открыт к обсуждению гибридного формата.
 
-Placeholder FAQ: currently open to interesting backend / LLM work. Replace with a real availability statement.
+**Какой уровень позиции рассматриваешь?** Junior+ / Middle, с прицелом на рост до 
+Mid/Staff AI-инженера — backend-разработка с AI/LLM-специализацией.
 
-## Placeholder stack questions
+**Работаешь с командой или соло?** И так, и так — есть опыт как соло-разработки 
+(архитектура + промпт-инжиниринг + деплой одним человеком), так и работы с клиентами 
+и их командами (например интеграции на стороне заказчика).
 
-Placeholder FAQ: preferred stack is FastAPI + Redis + RAG. Replace with real answers to frequent visitor questions.
+**Как быстро можешь начать?** Сразу.

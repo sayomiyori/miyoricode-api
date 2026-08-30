@@ -116,6 +116,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Respon
             "reply": _rate_limit_reply(lang, settings),
             "session_id": session_id,
             "source": "fallback_declined",
+            "attachments": None,
         },
         headers={"Retry-After": "60"},
     )

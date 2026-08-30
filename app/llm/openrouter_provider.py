@@ -26,7 +26,7 @@ class OpenRouterProvider(LLMProvider):
             "model": self._model,
             "messages": messages,
             "temperature": 0.4,
-            "max_tokens": 400,
+            "max_tokens": 2000,
         }
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:

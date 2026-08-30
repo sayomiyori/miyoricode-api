@@ -1,11 +1,18 @@
-# Skills
+# Технологии
 
-> PLACEHOLDER — replace with real content. Lists below are fixtures, not a claim about the developer.
+**Backend:** Python, FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL, Redis, 
+Celery, RabbitMQ, asyncio
 
-## Placeholder backend
+**AI/LLM:** OpenAI API, Anthropic API, Groq, RAG-архитектуры, Qdrant (vector search), 
+function calling, промпт-инжиниринг, работа с AI-ассистированной разработкой 
+(Claude + Cursor как основной рабочий процесс)
 
-Placeholder skills: Python, FastAPI, PostgreSQL, Redis. Replace with the real skill list.
+**Боты и интеграции:** aiogram 3 (Telegram), amoCRM API, Playwright (браузерная 
+автоматизация)
 
-## Placeholder LLM
+**Инфраструктура:** Docker, Docker Compose, VPS-деплой, CI/CD, structured logging, 
+security-аудит собственного кода
 
-Placeholder skills: RAG, prompt guardrails, OpenAI-compatible HTTP APIs. Replace with the real LLM/tooling list.
+**Фронтенд (базово, для полного цикла):** Next.js, React, TypeScript, Tailwind CSS
+
+**Также:** C# (был первым языком до перехода на Python), опыт с NoSQL

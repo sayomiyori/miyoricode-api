@@ -15,7 +15,7 @@ POST /chat
                                     └─ both down → contact string, still 200
 ```
 
-Knowledge under `app/rag/knowledge_base/` is **placeholder** copy so the pipeline can be tested end-to-end. Replace the markdown and restart — the FAISS index is rebuilt on every boot (nothing is cached to disk).
+Knowledge lives in `app/rag/knowledge_base/` markdown. The FAISS index is rebuilt on every boot (nothing is cached to disk) — restart after editing those files.
 
 ## Frontend
 
@@ -69,15 +69,21 @@ docker compose up --build
 {
   "reply": "...",
   "session_id": "uuid4",
-  "source": "structured" | "rag" | "fallback_declined"
+  "source": "structured" | "rag" | "fallback_declined",
+  "attachments": {
+    "link": "https://…",
+    "images": [{ "url": "/projects/velox/….png", "frame": "phone" | "browser", "alt": "…" }]
+  } | null
 }
 ```
+
+`attachments` is filled only when the **user message** names a project that has media in `app/tools/project_media.py` (currently Velox / велокс). A general Projects shortcut stays `null` even though the markdown mentions Velox. Image `url` values are frontend-relative paths; this API does not host the files.
 
 - `message`: 1–5000 characters at the request boundary. Product length is still **1500** in the heuristic — over that the chat stays **200** with `fallback_declined` so the UI can render a line, not a validation error.
 - `session_id`: UUID4 from the client is kept; anything else is dropped and the server issues a new id. Same rule for the cookie. Redis keys are never arbitrary strings.
 - Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` off locally (`COOKIE_SECURE=false`).
 
-Rate-limit 429s still return JSON `{ reply, session_id, source }` so the frontend can show them as a chat bubble.
+Rate-limit 429s still return JSON `{ reply, session_id, source, attachments }` so the frontend can show them as a chat bubble.
 
 ## Guardrails
 

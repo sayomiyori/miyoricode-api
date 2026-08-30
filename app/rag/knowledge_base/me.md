@@ -1,11 +1,20 @@
-# Me
+# Обо мне
 
-> PLACEHOLDER — replace with real content. Do not treat anything in this file as a real biography.
+Меня зовут Матвей (в сети — Sayomi). Я backend-разработчик на Python, специализируюсь 
+на AI/LLM-интеграциях. Живу в Симферополе.
 
-## Placeholder bio
+Учился на компьютерных науках в КФУ (Крымский федеральный университет).
 
-Placeholder profile: backend / LLM engineer named Matvey. Replace this section with a real short bio (stack, years, focus). This paragraph exists so retrieval has something to match for "who are you" / "tell me about yourself" questions.
+Сейчас совмещаю фриланс (в основном через Kwork) с работой в edtech-стартапе, где 
+занимаюсь архитектурой CRM/LMS-систем.
 
-## Placeholder focus
+Моя специализация — не просто "пишу backend", а именно стык бэкенда и AI: RAG-системы, 
+интеграция LLM (OpenAI, Anthropic, Groq) в реальные бизнес-процессы, автоматизация 
+через ботов и CRM.
 
-Placeholder focus areas: FastAPI, RAG pipelines, Telegram bots. Replace with real specialties.
+Цель на ближайшее время — перейти на позицию mid/staff AI-инженера в продуктовой 
+команде, в идеале в удалённом формате.
+
+Работаю в связке с AI-ассистентами (Claude как архитектор/аналитик, Cursor пишет код) — 
+это не просто инструмент, а часть моего рабочего процесса, о котором я могу подробно 
+рассказать.

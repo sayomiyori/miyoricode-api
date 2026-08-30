@@ -18,7 +18,7 @@ from app.limiter import limiter
 from app.llm.cascade import LLMCascade
 from app.rag.retriever import Retriever
 from app.session.store import SessionStore
-from app.tools.structured_answers import match_structured
+from app.tools.structured_answers import match_attachments, match_structured
 
 router = APIRouter()
 settings_for_limits = get_settings()
@@ -34,10 +34,39 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class AttachmentImage(BaseModel):
+    url: str
+    frame: Literal["phone", "browser"]
+    alt: str
+
+
+class ChatAttachments(BaseModel):
+    link: str | None = None
+    images: list[AttachmentImage] | None = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
     source: Literal["structured", "rag", "fallback_declined"]
+    attachments: ChatAttachments | None = None
+
+
+def _chat_response(
+    *,
+    reply: str,
+    session_id: str,
+    source: Literal["structured", "rag", "fallback_declined"],
+    message: str,
+    declined: bool = False,
+) -> ChatResponse:
+    attachments = None if declined else match_attachments(message)
+    return ChatResponse(
+        reply=reply,
+        session_id=session_id,
+        source=source,
+        attachments=attachments,
+    )
 
 
 def attach_session_cookie(response: Response, session_id: str, settings: Settings) -> None:
@@ -86,10 +115,12 @@ async def chat(request: Request, body: ChatRequest, response: Response) -> ChatR
 
     filtered = check_message(body.message, body.lang, settings)
     if filtered.declined:
-        return ChatResponse(
+        return _chat_response(
             reply=filtered.reply,
             session_id=session_id,
             source="fallback_declined",
+            message=body.message,
+            declined=True,
         )
 
     store: SessionStore = request.app.state.session_store
@@ -99,6 +130,10 @@ async def chat(request: Request, body: ChatRequest, response: Response) -> ChatR
     if structured is not None:
         context = structured.content
         source: Literal["structured", "rag", "fallback_declined"] = "structured"
+        knowledge_prefix = (
+            "Structured source document — translate in full. "
+            "Copy every URL and proper name character-for-character:\n"
+        )
     else:
         retriever: Retriever = request.app.state.retriever
         chunks = retriever.retrieve(body.message, k=settings.retrieve_k)
@@ -106,12 +141,13 @@ async def chat(request: Request, body: ChatRequest, response: Response) -> ChatR
             f"source={chunk.source} heading={chunk.heading}\n{chunk.text}" for chunk in chunks
         )
         source = "rag"
+        knowledge_prefix = "Retrieved knowledge:\n"
 
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": build_system_prompt(body.lang, settings)},
+        {"role": "system", "content": build_system_prompt(body.lang, settings, source=source)},
         {
             "role": "system",
-            "content": "Retrieved knowledge (may be PLACEHOLDER fixtures):\n" + (context or "(empty)"),
+            "content": knowledge_prefix + (context or "(empty)"),
         },
     ]
     for item in history:
@@ -120,13 +156,25 @@ async def chat(request: Request, body: ChatRequest, response: Response) -> ChatR
 
     cascade: LLMCascade = request.app.state.cascade
     raw = await cascade.generate(messages, fallback=llm_unavailable_fallback(body.lang, settings))
-    reply, leaked = filter_output(raw, body.lang, settings)
+    reply, leaked = filter_output(
+        raw,
+        body.lang,
+        settings,
+        enforce_length=(source == "rag"),
+    )
     if leaked:
-        return ChatResponse(
+        return _chat_response(
             reply=reply,
             session_id=session_id,
             source="fallback_declined",
+            message=body.message,
+            declined=True,
         )
 
     await store.append_turn(session_id, body.message, reply)
-    return ChatResponse(reply=reply, session_id=session_id, source=source)
+    return _chat_response(
+        reply=reply,
+        session_id=session_id,
+        source=source,
+        message=body.message,
+    )

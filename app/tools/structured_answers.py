@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from app.tools.project_media import PROJECT_MEDIA, ProjectMedia
 
 KB_DIR = Path(__file__).resolve().parent.parent / "rag" / "knowledge_base"
 
@@ -11,6 +15,7 @@ CATEGORY_FILES = {
     "skills": "skills.md",
     "fun": "fun.md",
     "contact": "contact.md",
+    "faq": "faq.md",
 }
 
 # Shortcut button labels and common paraphrases. No separate request flag from the frontend.
@@ -28,14 +33,21 @@ TRIGGERS: list[tuple[str, str]] = [
     ("your projects", "projects"),
     ("tell me about your projects", "projects"),
     ("расскажи о проектах", "projects"),
+    ("какие у тебя проекты", "projects"),
+    ("какие проекты", "projects"),
     ("про проекты", "projects"),
     ("проекты", "projects"),
     ("skills", "skills"),
     ("your skills", "skills"),
     ("tell me about your skills", "skills"),
+    ("what's your tech stack", "skills"),
+    ("what is your tech stack", "skills"),
     ("навыки", "skills"),
     ("скиллы", "skills"),
     ("расскажи о навыках", "skills"),
+    ("какой стек используешь", "skills"),
+    ("какой стек", "skills"),
+    ("стек", "skills"),
     ("fun", "fun"),
     ("fun facts", "fun"),
     ("something fun", "fun"),
@@ -44,8 +56,14 @@ TRIGGERS: list[tuple[str, str]] = [
     ("contact", "contact"),
     ("how to contact", "contact"),
     ("how can i reach you", "contact"),
+    ("как с тобой связаться", "contact"),
     ("связаться", "contact"),
     ("контакты", "contact"),
+    ("faq", "faq"),
+    ("are you ready to relocate", "faq"),
+    ("ready to relocate", "faq"),
+    ("готов к переезду", "faq"),
+    ("переезд", "faq"),
 ]
 
 
@@ -54,6 +72,41 @@ class StructuredMatch:
     category: str
     content: str
     source_file: str
+
+
+def _alias_pattern(project: ProjectMedia) -> re.Pattern[str]:
+    escaped = "|".join(re.escape(alias) for alias in project.aliases)
+    return re.compile(rf"(?iu)\b(?:{escaped})\b")
+
+
+_PROJECT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (key, _alias_pattern(project)) for key, project in PROJECT_MEDIA.items()
+)
+
+
+def _attachments_payload(project: ProjectMedia) -> dict[str, Any]:
+    return {
+        "link": project.link,
+        "images": [
+            {"url": image.path, "frame": image.frame, "alt": image.alt}
+            for image in project.images
+        ],
+    }
+
+
+def match_attachments(message: str) -> dict[str, Any] | None:
+    """Overlay after the text reply is chosen.
+
+    Inspects the user question only. A general Projects shortcut does not
+    mention a catalog key, so attachments stay null even if the KB text
+    talks about Velox. Explicit Velox / велокс still attaches on RAG turns.
+    """
+    if not message.strip():
+        return None
+    for key, pattern in _PROJECT_PATTERNS:
+        if pattern.search(message):
+            return _attachments_payload(PROJECT_MEDIA[key])
+    return None
 
 
 def match_structured(message: str) -> StructuredMatch | None:

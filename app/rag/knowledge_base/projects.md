@@ -1,15 +1,50 @@
-# Projects
+# Проекты
 
-> PLACEHOLDER — replace with real content. Example entries below are fictional fixtures for pipeline tests, not a real portfolio.
+## Velox — AI-платформа для бегунов
+Продакшен-платформа с AI running coach для клиента. Стек: FastAPI, React/TypeScript, 
+aiogram 3, Docker, Qdrant (hybrid search RAG). Лендинг: https://velox-rag-lending.vercel.app 
 
-## Placeholder project: CRM automation bot — replace with real content
+Ключевое: RAG-система с 4 персонажами-тренерами (текстовые + голосовые сценарии), 
+SSE-стриминг ответов, анализ тренировок с детекцией личных рекордов, интеграция со 
+Strava, метрики нагрузки (CTL/ATL/FORM/ACWR) как у профессиональных спортивных 
+платформ. Отдельно горжусь оптимизацией стоимости инференса — кэширование системного 
+промпта снизило расход на 93% на сообщение, плюс модель-каскад (лёгкая/тяжёлая модель 
+в зависимости от сложности запроса).
 
-Placeholder project: CRM automation bot — replace with real content. A sample Telegram bot that syncs leads into a fake CRM. Used only to verify that questions like "расскажи о проектах" retrieve this file.
+## SaaSAiMenu (Maitre) — SaaS QR-меню для ресторанов
+Мультитенантная платформа для премиальных ресторанов, сейчас готовится к запуску 
+в Москве. Стек: FastAPI + SQLAlchemy 2 async + PostgreSQL + Redis + Next.js.
 
-## Placeholder project: Menu QR SaaS stub — replace with real content
+AI-агент-официант на function calling (без vector RAG — не нужен при объёме каталога 
+блюд), допродажи, ответы про состав/аллергены. Отдельно — 3D-визуализация блюд: 
+генерация 3D-моделей из фото через Meshy AI + вьювер на Three.js. Прошёл security-аудит 
+(49/49 тестов, 0 критичных уязвимостей).
 
-Placeholder project: Menu QR SaaS stub — replace with real content. A sample FastAPI service that would serve QR menus. Not a real shipped product in this knowledge base.
+## AI-CHAINA — автоматизация документооборота для импорта из Китая
+Убрал ручную работу полностью: автогенерация финансовых документов для сделок импорта 
+(таможенные платежи, логистика, комиссии — всё считается автоматически), 4 типа 
+документов на сделку, обновление при изменении данных в CRM без участия человека.
 
-## Placeholder project: Workout coach diary stub — replace with real content
+Стек: FastAPI, Yandex Cloud Serverless, amoCRM API, Google Drive API. Технически 
+интересная часть — асинхронный пайплайн через очередь сообщений с учётом жёсткого 
+лимита на ответ вебхука, защита от дублей через хеширование состояния сделки, 
+распределённые блокировки для потокобезопасного обновления токенов.
 
-Placeholder project: Workout coach diary stub — replace with real content. A sample notes pipeline for training logs. Replace with a real project write-up.
+## Автоматизации на amoCRM (несколько клиентов)
+Ряд проектов по настройке и интеграции amoCRM: с нуля выстроенные воронки для 
+ВЭД-бизнеса (импорт из Китая), интеграция с TravelLine (бронирование отелей) для 
+курортного бизнеса, синхронизация с внешними ботами продаж. Плюс микросервисы 
+отчётности — еженедельные AI-сводки по сделкам (LLM-суммаризация), health-эндпоинты, 
+структурированное логирование.
+
+## Автоматизация подбора работы (hh.ru)
+Бот для автоматизации отклика на вакансии на hh.ru — Celery, Playwright, планировщик 
+задач, защита от блокировки аккаунта площадкой. Отдельный модуль поверх этого — 
+генерация персонализированных сопроводительных писем через LLM на основе резюме 
+и текста вакансии.
+
+## Видео-автопостинг (мультиплатформенный)
+Сервис автоматической публикации видео на несколько платформ одновременно для 
+агентства-клиента. Стек: Python + Playwright + aiogram + Docker, мультипрофильная 
+архитектура, визуализация браузера через KasmVNC, дашборд на Next.js + FastAPI 
+с логами в реальном времени через WebSocket.
