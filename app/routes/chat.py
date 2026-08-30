@@ -49,13 +49,23 @@ class ChatAttachments(BaseModel):
     images: list[AttachmentImage] | None = None
 
 
+class CarouselLink(BaseModel):
+    label: str
+    url: str
+
+
 class CarouselItem(BaseModel):
     id: str
     title: str
     category: str
+    year: str
     cover_image: str | None = None
     cover_gradient: list[str] | None = None
+    description: str
+    technologies: list[str]
     link: str | None = None
+    links: list[CarouselLink] = []
+    screenshots: list[AttachmentImage] = []
 
 
 class ChatCard(BaseModel):

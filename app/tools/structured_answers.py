@@ -102,9 +102,19 @@ def _carousel_payload() -> dict[str, Any]:
                 "id": item.id,
                 "title": item.title,
                 "category": item.category,
+                "year": item.year,
                 "cover_image": item.cover_image,
                 "cover_gradient": list(item.cover_gradient) if item.cover_gradient else None,
+                "description": item.description,
+                "technologies": list(item.technologies),
                 "link": item.link,
+                "links": [
+                    {"label": link.label, "url": link.url} for link in item.links
+                ],
+                "screenshots": [
+                    {"url": image.path, "frame": image.frame, "alt": image.alt}
+                    for image in item.screenshots
+                ],
             }
             for item in PROJECT_CAROUSEL
         ],

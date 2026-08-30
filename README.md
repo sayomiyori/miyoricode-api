@@ -77,9 +77,16 @@ docker compose up --build
         "id": "velox",
         "title": "Velox",
         "category": "AI Product",
+        "year": "2026",
         "cover_image": "/projects/velox/dashboard-overview.png",
         "cover_gradient": null,
-        "link": "https://velox-rag-lending.vercel.app"
+        "description": "…",
+        "technologies": ["FastAPI", "React"],
+        "link": "https://velox-rag-lending.vercel.app",
+        "links": [],
+        "screenshots": [
+          { "url": "/projects/velox/….png", "frame": "phone" | "browser", "alt": "…" }
+        ]
       }
     ]
   } | null,
@@ -92,7 +99,7 @@ docker compose up --build
 
 `card` and `attachments` are mutually exclusive overlays:
 
-- `card` (`project_carousel`, all six projects) is filled only for the **general Projects shortcut** (`Tell me about your projects` / `расскажи о проектах`). Text reply stays as before.
+- `card` (`project_carousel`, ten projects: six client + four pet) is filled only for the **general Projects shortcut** (`Tell me about your projects` / `расскажи о проектах`). Text reply stays as before. Pet-project `screenshots` are `raw.githubusercontent.com` URLs; Velox shots stay frontend-relative.
 - `attachments` is filled only when the **user message** names a project that has media in `app/tools/project_media.py` (currently Velox / велокс). Image `url` values are frontend-relative paths; this API does not host the files.
 - A named project (`Velox`, `SaaSAiMenu`, …) never gets the carousel. `fallback_declined` and 429 always send both as `null`.
 

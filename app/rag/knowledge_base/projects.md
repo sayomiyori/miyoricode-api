@@ -48,3 +48,25 @@ AI-агент-официант на function calling (без vector RAG — не
 агентства-клиента. Стек: Python + Playwright + aiogram + Docker, мультипрофильная 
 архитектура, визуализация браузера через KasmVNC, дашборд на Next.js + FastAPI 
 с логами в реальном времени через WebSocket.
+
+## AgentHub — pet-проект, AI-платформа с RAG и MCP
+Собственная платформа: RAG на pgvector (семантика + reranking), агенты на function 
+calling, MCP-сервер по SSE, роутинг Gemini/Anthropic/OpenAI. Семантический кэш в 
+Redis (LSH, cosine ≥0.95) и учёт стоимости токенов. Эмбеддинги живут в том же 
+PostgreSQL, что и метаданные документов. Репозиторий: https://github.com/sayomiyori/AgentHub
+
+## AuthFortress — pet-проект, auth-микросервис
+JWT с ротацией refresh-токенов, OAuth2 (Google/GitHub/Yandex), TOTP 2FA, RBAC 
+(user/admin/superadmin), аудит-лог, rate limiting через Redis, Prometheus. 
+Повторное использование refresh-токена после ротации даёт 401. 
+Репозиторий: https://github.com/sayomiyori/AuthFortress
+
+## NeuroClassifier — pet-проект, ML-инференс
+Загрузка датасета → LoRA fine-tune vision transformer на Celery → предсказания 
+через ONNX Runtime. Реестр моделей в MinIO, мониторинг Prometheus/Grafana. LoRA 
+учит ~1% параметров, сходится на CPU. Репозиторий: https://github.com/sayomiyori/NeuroClassifier
+
+## EventPipe — pet-проект, ETL-пайплайн
+Ingest (REST + gRPC) → Kafka → Transform → PostgreSQL + MinIO, Query API и DLQ. 
+Три сервиса масштабируются отдельно. Docker Compose и Kubernetes, Transform-воркеры 
+по партициям Kafka. Репозиторий: https://github.com/sayomiyori/EventPipe

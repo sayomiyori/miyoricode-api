@@ -252,7 +252,7 @@ def test_security_headers_do_not_clobber_cors(client: TestClient):
 def _assert_project_carousel(card: dict) -> None:
     assert card["type"] == "project_carousel"
     items = card["items"]
-    assert len(items) == 6
+    assert len(items) == 10
     assert [item["id"] for item in items] == [
         "velox",
         "saasaimenu",
@@ -260,14 +260,22 @@ def _assert_project_carousel(card: dict) -> None:
         "amocrm",
         "hh-bot",
         "video-autoposting",
+        "agenthub",
+        "authfortress",
+        "neuroclassifier",
+        "eventpipe",
     ]
     assert [item["title"] for item in items] == [
         "Velox",
-        "SaaSAiMenu",
+        "SaaSAiMenu (Maitre)",
         "AI-CHAINA",
         "amoCRM Automations",
-        "hh.ru Job Bot",
+        "hh.ru Job Automation",
         "Video Autoposting",
+        "AgentHub",
+        "AuthFortress",
+        "NeuroClassifier",
+        "EventPipe",
     ]
     assert [item["category"] for item in items] == [
         "AI Product",
@@ -276,7 +284,16 @@ def _assert_project_carousel(card: dict) -> None:
         "CRM Integration",
         "Job Automation",
         "Automation Tool",
+        "Pet Project",
+        "Pet Project",
+        "Pet Project",
+        "Pet Project",
     ]
+    agenthub = items[6]
+    assert agenthub["links"][0]["url"] == "https://github.com/sayomiyori/AgentHub"
+    assert agenthub["screenshots"][0]["url"].startswith(
+        "https://raw.githubusercontent.com/sayomiyori/AgentHub/"
+    )
 
 
 def _assert_velox_chat_attachments(attachments: dict) -> None:

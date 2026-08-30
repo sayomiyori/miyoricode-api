@@ -141,14 +141,22 @@ _CAROUSEL_IDS = (
     "amocrm",
     "hh-bot",
     "video-autoposting",
+    "agenthub",
+    "authfortress",
+    "neuroclassifier",
+    "eventpipe",
 )
 _CAROUSEL_TITLES = (
     "Velox",
-    "SaaSAiMenu",
+    "SaaSAiMenu (Maitre)",
     "AI-CHAINA",
     "amoCRM Automations",
-    "hh.ru Job Bot",
+    "hh.ru Job Automation",
     "Video Autoposting",
+    "AgentHub",
+    "AuthFortress",
+    "NeuroClassifier",
+    "EventPipe",
 )
 _CAROUSEL_CATEGORIES = (
     "AI Product",
@@ -157,13 +165,17 @@ _CAROUSEL_CATEGORIES = (
     "CRM Integration",
     "Job Automation",
     "Automation Tool",
+    "Pet Project",
+    "Pet Project",
+    "Pet Project",
+    "Pet Project",
 )
 
 
 def _assert_project_carousel(payload: dict) -> None:
     assert payload["type"] == "project_carousel"
     items = payload["items"]
-    assert len(items) == 6
+    assert len(items) == 10
     assert [item["id"] for item in items] == list(_CAROUSEL_IDS)
     assert [item["title"] for item in items] == list(_CAROUSEL_TITLES)
     assert [item["category"] for item in items] == list(_CAROUSEL_CATEGORIES)
@@ -171,10 +183,31 @@ def _assert_project_carousel(payload: dict) -> None:
     assert velox["cover_image"] == "/projects/velox/dashboard-overview.png"
     assert velox["cover_gradient"] is None
     assert velox["link"] == "https://velox-rag-lending.vercel.app"
+    assert velox["year"] == "2026"
+    assert velox["description"]
+    assert "FastAPI" in velox["technologies"]
+    assert len(velox["screenshots"]) == 4
+    assert velox["screenshots"][0]["frame"] == "phone"
     saas = items[1]
     assert saas["cover_image"] is None
     assert saas["cover_gradient"] == ["#4c6ef5", "#3ecf8e"]
     assert saas["link"] is None
+    assert saas["screenshots"] == []
+    agenthub = items[6]
+    assert agenthub["category"] == "Pet Project"
+    assert agenthub["links"] == [
+        {"label": "GitHub", "url": "https://github.com/sayomiyori/AgentHub"}
+    ]
+    assert agenthub["cover_image"].startswith(
+        "https://raw.githubusercontent.com/sayomiyori/AgentHub/"
+    )
+    assert all(
+        shot["url"].startswith("https://raw.githubusercontent.com/sayomiyori/")
+        and shot["frame"] == "browser"
+        and shot["alt"]
+        for shot in agenthub["screenshots"]
+    )
+    assert len(agenthub["screenshots"]) == 4
 
 
 def test_carousel_on_general_projects_shortcut():
