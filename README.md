@@ -159,9 +159,9 @@ Live checks (API + Redis up): `python scripts/adversarial_check.py --all`
 
 ## Deploy
 
-Railway reads [`railway.toml`](railway.toml) and the `Dockerfile`. The container listens on `$PORT`.
+The container is built from the repo `Dockerfile` and listens on `$PORT`. No platform-specific manifest is required — the Dockerfile is the source of truth for any host that builds the image directly (Render, VPS, Fly, etc.).
 
 Local HTTP and production HTTPS are different cookie topologies. Do **not** flip defaults in this repo for a guess:
 
 - Locally, UI `:3000` and API `:8000` are same-site, so `SameSite=Lax` works with credentialed `fetch`.
-- When the UI is on another registrable domain (Vercel) and this API is on Railway, the request is **cross-site**. Set `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`, HTTPS, and put the real UI origin in `ALLOWED_ORIGINS`. Flipping those defaults in git would break local HTTP.
+- When the UI is on another registrable domain (e.g. Vercel) and this API runs on a different host, the request is **cross-site**. Set `COOKIE_SECURE=true`, `COOKIE_SAMESITE=none`, HTTPS, and put the real UI origin in `ALLOWED_ORIGINS`. Flipping those defaults in git would break local HTTP.
