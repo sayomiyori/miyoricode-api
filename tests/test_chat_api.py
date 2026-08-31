@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 
@@ -20,33 +21,36 @@ from app.limiter import limiter
 from app.main import app
 from app.routes.chat import MAX_MESSAGE_PAYLOAD_CHARS, _canonical_session_uuid
 from app.session.store import SessionStore
+from tests.conftest import FakeCascade
 from tests.test_session import FakeRedis
 
 
-class FakeCascade:
-    def __init__(self) -> None:
-        self.calls: list[list[dict[str, str]]] = []
+def _read_sse_events(response: Response) -> list[tuple[str, dict]]:
+    """Parse an SSE response body into a list of (event_name, data_dict) tuples.
 
-    async def generate(self, messages: list[dict[str, str]], fallback: str) -> str:
-        self.calls.append(messages)
-        blob = " ".join(item["content"] for item in messages)
-        if "Respond only in English" in blob or "только на русском" in blob:
-            lang_ok = True
-        else:
-            lang_ok = False
-        if ("меня зовут Х" in blob or "меня зовут X" in blob) and "как меня зовут" in blob.lower():
-            return "Тебя зовут Х"
-        if not lang_ok:
-            return "missing-lang-instruction"
-        for item in messages:
-            if item["role"] == "system" and "только на русском" in item["content"]:
-                return "Это ответ на русском про placeholder-проекты."
-        return "This is an English placeholder reply about projects."
-
-
-@pytest.fixture()
-def cascade() -> FakeCascade:
-    return FakeCascade()
+    TestClient streams StreamingResponse in one shot (it consumes the
+    generator before returning), so `response.text` already contains the full
+    payload. We split on the SSE event separator (\\n\\n).
+    """
+    events: list[tuple[str, dict]] = []
+    payload = response.text
+    if not payload:
+        return events
+    for block in payload.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        event_name = ""
+        data_str = ""
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event_name = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data_str = line[len("data:"):].strip()
+        if not event_name or not data_str:
+            continue
+        events.append((event_name, json.loads(data_str)))
+    return events
 
 
 @pytest.fixture()
@@ -63,6 +67,24 @@ def _assert_security_headers(response: Response) -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+
+def _events_text(events: list[tuple[str, dict]]) -> str:
+    return "".join(d["text"] for ev, d in events if ev == "token")
+
+
+def _metadata(events: list[tuple[str, dict]]) -> dict:
+    for ev, data in events:
+        if ev == "metadata":
+            return data
+    raise AssertionError("metadata event missing")
+
+
+def _done(events: list[tuple[str, dict]]) -> dict:
+    for ev, data in reversed(events):
+        if ev == "done":
+            return data
+    raise AssertionError("done event missing")
 
 
 def test_health_does_not_500(client: TestClient):
@@ -84,12 +106,16 @@ def test_injection_is_declined_without_calling_llm(client: TestClient, cascade: 
         },
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "fallback_declined"
-    assert body["card"] is None
-    assert body["attachments"] is None
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _read_sse_events(response)
+    assert events
+    metadata = _metadata(events)
+    assert metadata["source"] == "fallback_declined"
+    assert metadata["card"] is None
+    assert metadata["attachments"] is None
+    assert "session_id" in metadata
+    assert _done(events)["source"] == "fallback_declined"
     assert cascade.calls == []
-    assert "session_id" in body
     assert "session_id" in response.cookies
 
 
@@ -99,13 +125,16 @@ def test_projects_shortcut_is_structured(client: TestClient, cascade: FakeCascad
         json={"message": "Tell me about your projects", "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "structured"
-    assert body["attachments"] is None
-    _assert_project_carousel(body["card"])
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "structured"
+    assert metadata["attachments"] is None
+    _assert_project_carousel(metadata["card"])
     assert cascade.calls
     knowledge = cascade.calls[0][1]["content"]
     assert "Velox" in knowledge
+    assert _done(events)["source"] == "structured"
 
 
 def test_lang_ru_forces_russian_system_instruction(client: TestClient, cascade: FakeCascade):
@@ -116,7 +145,8 @@ def test_lang_ru_forces_russian_system_instruction(client: TestClient, cascade: 
     assert response.status_code == 200
     system = cascade.calls[0][0]["content"]
     assert "только на русском" in system
-    assert response.json()["reply"].startswith("Это ответ")
+    events = _read_sse_events(response)
+    assert _events_text(events).startswith("Это ответ")
 
 
 def test_session_history_is_sent_on_second_turn(client: TestClient, cascade: FakeCascade):
@@ -124,7 +154,9 @@ def test_session_history_is_sent_on_second_turn(client: TestClient, cascade: Fak
         "/chat",
         json={"message": "меня зовут Х", "lang": "ru", "session_id": None},
     )
-    session_id = first.json()["session_id"]
+    assert first.status_code == 200
+    first_events = _read_sse_events(first)
+    session_id = _metadata(first_events)["session_id"]
     second = client.post(
         "/chat",
         json={"message": "как меня зовут?", "lang": "ru", "session_id": session_id},
@@ -136,6 +168,7 @@ def test_session_history_is_sent_on_second_turn(client: TestClient, cascade: Fak
 
 
 def test_rate_limit_returns_json_body(client: TestClient):
+    """Slowapi runs before the handler. 429 stays JSON, not SSE."""
     settings = get_settings()
     session_id = "rate-limit-test-session"
     payload = {"message": "hello there", "lang": "en", "session_id": session_id}
@@ -159,10 +192,11 @@ def test_message_too_long_is_declined(client: TestClient, cascade: FakeCascade):
         json={"message": "x" * 1501, "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "fallback_declined"
-    assert body["card"] is None
-    assert body["attachments"] is None
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _read_sse_events(response)
+    assert _metadata(events)["source"] == "fallback_declined"
+    assert _metadata(events)["card"] is None
+    assert _metadata(events)["attachments"] is None
     assert cascade.calls == []
     _assert_security_headers(response)
 
@@ -196,7 +230,8 @@ def test_arbitrary_session_id_is_replaced_with_uuid4(client: TestClient):
         },
     )
     assert response.status_code == 200
-    session_id = response.json()["session_id"]
+    events = _read_sse_events(response)
+    session_id = _metadata(events)["session_id"]
     parsed = uuid.UUID(session_id)
     assert parsed.version == 4
     assert session_id == str(parsed)
@@ -210,7 +245,8 @@ def test_valid_uuid4_session_id_is_accepted(client: TestClient):
         json={"message": "Tell me about your projects", "lang": "en", "session_id": session_id},
     )
     assert response.status_code == 200
-    assert response.json()["session_id"] == session_id
+    events = _read_sse_events(response)
+    assert _metadata(events)["session_id"] == session_id
 
 
 def test_canonical_session_uuid_rejects_non_uuid4():
@@ -314,11 +350,12 @@ def test_velox_question_returns_attachments(client: TestClient):
         json={"message": "tell me about Velox", "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "rag"
-    assert body["reply"]
-    assert body["card"] is None
-    _assert_velox_chat_attachments(body["attachments"])
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "rag"
+    assert metadata["card"] is None
+    _assert_velox_chat_attachments(metadata["attachments"])
+    assert _events_text(events)
 
 
 def test_velox_russian_question_returns_attachments(client: TestClient):
@@ -327,10 +364,11 @@ def test_velox_russian_question_returns_attachments(client: TestClient):
         json={"message": "расскажи про Velox", "lang": "ru", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "rag"
-    assert body["card"] is None
-    _assert_velox_chat_attachments(body["attachments"])
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "rag"
+    assert metadata["card"] is None
+    _assert_velox_chat_attachments(metadata["attachments"])
 
 
 def test_general_projects_question_returns_carousel(client: TestClient):
@@ -339,11 +377,32 @@ def test_general_projects_question_returns_carousel(client: TestClient):
         json={"message": "расскажи о проектах", "lang": "ru", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "structured"
-    assert body["reply"]
-    assert body["attachments"] is None
-    _assert_project_carousel(body["card"])
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "structured"
+    assert metadata["attachments"] is None
+    _assert_project_carousel(metadata["card"])
+    assert _events_text(events)
+    assert "AI-платформа" in metadata["card"]["items"][0]["description"]
+
+
+def test_general_projects_question_returns_english_carousel(client: TestClient):
+    response = client.post(
+        "/chat",
+        json={"message": "Tell me about your projects", "lang": "en", "session_id": None},
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "structured"
+    assert metadata["attachments"] is None
+    _assert_project_carousel(metadata["card"])
+    velox = metadata["card"]["items"][0]["description"]
+    amocrm = metadata["card"]["items"][3]["description"]
+    assert "AI platform for runners" in velox
+    assert "AI-платформа" not in velox
+    assert "foreign trade / import-export" in amocrm
+    assert "VED" not in amocrm
 
 
 def test_velox_question_has_no_carousel(client: TestClient):
@@ -352,10 +411,11 @@ def test_velox_question_has_no_carousel(client: TestClient):
         json={"message": "Tell me about Velox", "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "rag"
-    assert body["card"] is None
-    _assert_velox_chat_attachments(body["attachments"])
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "rag"
+    assert metadata["card"] is None
+    _assert_velox_chat_attachments(metadata["attachments"])
 
 
 def test_other_project_question_has_no_card_or_attachments(client: TestClient):
@@ -364,11 +424,12 @@ def test_other_project_question_has_no_card_or_attachments(client: TestClient):
         json={"message": "Tell me about SaaSAiMenu", "lang": "en", "session_id": None},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "rag"
-    assert body["reply"]
-    assert body["card"] is None
-    assert body["attachments"] is None
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "rag"
+    assert _events_text(events)
+    assert metadata["card"] is None
+    assert metadata["attachments"] is None
 
 
 def test_declined_velox_injection_has_no_card_or_attachments(
@@ -383,8 +444,28 @@ def test_declined_velox_injection_has_no_card_or_attachments(
         },
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["source"] == "fallback_declined"
-    assert body["card"] is None
-    assert body["attachments"] is None
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "fallback_declined"
+    assert metadata["card"] is None
+    assert metadata["attachments"] is None
     assert cascade.calls == []
+
+
+def test_sse_streams_token_events_before_done(client: TestClient):
+    response = client.post(
+        "/chat",
+        json={"message": "Tell me about your projects", "lang": "en", "session_id": None},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = _read_sse_events(response)
+    event_names = [ev for ev, _ in events]
+    assert event_names[0] == "metadata"
+    assert "token" in event_names
+    assert event_names[-1] == "done"
+    # At least one token event between metadata and done.
+    metadata_idx = event_names.index("metadata")
+    done_idx = event_names.index("done")
+    assert metadata_idx < done_idx - 1
+    assert any(ev == "token" for ev in event_names[metadata_idx + 1:done_idx])

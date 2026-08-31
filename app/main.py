@@ -163,7 +163,8 @@ def create_app() -> FastAPI:
         allow_origins=settings.origins_list,
         allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
+        allow_headers=["Content-Type", "Authorization", "Accept", "Last-Event-ID"],
+        expose_headers=["Retry-After", "Content-Type"],
     )
     # Added last → outermost: runs after CORS so Access-Control-* stay intact.
     app.add_middleware(SecurityHeadersMiddleware)

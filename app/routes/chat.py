@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+import logging
 import uuid
-from typing import Literal
+from collections.abc import AsyncIterator
+from typing import Any, Literal
 
+import httpx
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
@@ -16,6 +21,7 @@ from app.guardrail.system_prompt import (
 )
 from app.limiter import limiter
 from app.llm.cascade import LLMCascade
+from app.llm.base import LLMError
 from app.rag.retriever import Retriever
 from app.session.store import SessionStore
 from app.tools.structured_answers import (
@@ -24,12 +30,23 @@ from app.tools.structured_answers import (
     match_structured,
 )
 
+logger = logging.getLogger("portfolio.routes")
+
 router = APIRouter()
 settings_for_limits = get_settings()
 
 # Hard ceiling for an obviously anomalous JSON body. Product length (1500) still
 # lives in heuristic_filter so the chat UX stays HTTP 200 + fallback_declined.
 MAX_MESSAGE_PAYLOAD_CHARS = 5000
+
+# Heartbeat / keep-alive is not emitted by default — Groq streams fast enough
+# that idle gaps are short. If a long pause ever appears between events,
+# introduce `: ping\n\n` comments on a background task here.
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
 
 
 class ChatRequest(BaseModel):
@@ -73,6 +90,7 @@ class ChatCard(BaseModel):
     items: list[CarouselItem]
 
 
+# Response model kept for OpenAPI / legacy callers; the actual wire format is SSE.
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
@@ -81,24 +99,9 @@ class ChatResponse(BaseModel):
     attachments: ChatAttachments | None = None
 
 
-def _chat_response(
-    *,
-    reply: str,
-    session_id: str,
-    source: Literal["structured", "rag", "fallback_declined"],
-    message: str,
-    declined: bool = False,
-) -> ChatResponse:
-    # Carousel (all projects) and Velox attachments never ship together.
-    attachments = None if declined else match_attachments(message)
-    card = None if declined or attachments is not None else match_project_carousel(message)
-    return ChatResponse(
-        reply=reply,
-        session_id=session_id,
-        source=source,
-        card=card,
-        attachments=attachments,
-    )
+def _format_sse(event: str, data: dict[str, Any]) -> bytes:
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
 def attach_session_cookie(response: Response, session_id: str, settings: Settings) -> None:
@@ -137,31 +140,62 @@ def _resolve_session_id(body: ChatRequest, request: Request, settings: Settings)
     return str(uuid.uuid4())
 
 
-@router.post("/chat", response_model=ChatResponse)
+def _build_sse_response(
+    generator: AsyncIterator[bytes],
+    cookie_response: Response,
+) -> StreamingResponse:
+    """Build a StreamingResponse and copy Set-Cookie headers from cookie_response.
+
+    FastAPI's StreamingResponse accepts arbitrary headers but does not support
+    set_cookie() directly — use a normal Response to compute cookie headers
+    first, then merge them in.
+    """
+    headers = {**dict(cookie_response.headers), **SSE_HEADERS}
+    return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
+
+
+@router.post("/chat")
 @limiter.limit(f"{settings_for_limits.rate_limit_per_minute}/minute")
 @limiter.limit(f"{settings_for_limits.rate_limit_per_day}/day")
-async def chat(request: Request, body: ChatRequest, response: Response) -> ChatResponse:
+async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     settings: Settings = request.app.state.settings
     session_id = _resolve_session_id(body, request, settings)
-    attach_session_cookie(response, session_id, settings)
 
+    # Set-Cookie has to be computed on a real Response object.
+    cookie_response = Response()
+    attach_session_cookie(cookie_response, session_id, settings)
+
+    # 1) Input guardrail — blocking, before any SSE bytes.
     filtered = check_message(body.message, body.lang, settings)
     if filtered.declined:
-        return _chat_response(
-            reply=filtered.reply,
-            session_id=session_id,
-            source="fallback_declined",
-            message=body.message,
-            declined=True,
-        )
+        async def _declined_stream() -> AsyncIterator[bytes]:
+            yield _format_sse(
+                "metadata",
+                {
+                    "card": None,
+                    "attachments": None,
+                    "session_id": session_id,
+                    "source": "fallback_declined",
+                },
+            )
+            yield _format_sse(
+                "token",
+                {"text": filtered.reply},
+            )
+            yield _format_sse(
+                "done",
+                {"source": "fallback_declined", "session_id": session_id},
+            )
+        return _build_sse_response(_declined_stream(), cookie_response)
 
+    # 2) Resolve path + overlays (sync, fast, deterministic).
     store: SessionStore = request.app.state.session_store
     history = await store.get_history(session_id)
 
     structured = match_structured(body.message)
     if structured is not None:
         context = structured.content
-        source: Literal["structured", "rag", "fallback_declined"] = "structured"
+        source: Literal["structured", "rag"] = "structured"
         knowledge_prefix = (
             "Structured source document — translate in full. "
             "Copy every URL and proper name character-for-character:\n"
@@ -186,27 +220,72 @@ async def chat(request: Request, body: ChatRequest, response: Response) -> ChatR
         messages.append({"role": item.role, "content": item.content})
     messages.append({"role": "user", "content": wrap_user_question(body.message)})
 
-    cascade: LLMCascade = request.app.state.cascade
-    raw = await cascade.generate(messages, fallback=llm_unavailable_fallback(body.lang, settings))
-    reply, leaked = filter_output(
-        raw,
-        body.lang,
-        settings,
-        enforce_length=(source == "rag"),
+    # 3) Pre-compute overlays — depend only on (message, lang), NOT on LLM output.
+    attachments = match_attachments(body.message)
+    card = (
+        None
+        if attachments is not None
+        else match_project_carousel(body.message, body.lang)
     )
-    if leaked:
-        return _chat_response(
-            reply=reply,
-            session_id=session_id,
-            source="fallback_declined",
-            message=body.message,
-            declined=True,
+
+    cascade: LLMCascade = request.app.state.cascade
+    fallback_text = llm_unavailable_fallback(body.lang, settings)
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        # [a] metadata FIRST — overlay + session + source. Card/attachments
+        # are independent of the LLM, so the client can render them before
+        # any tokens arrive.
+        yield _format_sse(
+            "metadata",
+            {
+                "card": card,
+                "attachments": attachments,
+                "session_id": session_id,
+                "source": source,
+            },
         )
 
-    await store.append_turn(session_id, body.message, reply)
-    return _chat_response(
-        reply=reply,
-        session_id=session_id,
-        source=source,
-        message=body.message,
-    )
+        # [b] stream tokens from the cascade. We buffer the full reply so the
+        # output leak filter can scan it on the complete text (canary patterns
+        # are substring-based and require the whole message).
+        reply_buf: list[str] = []
+        try:
+            async for chunk in cascade.stream(messages, fallback=fallback_text):
+                reply_buf.append(chunk)
+                yield _format_sse("token", {"text": chunk})
+        except (httpx.HTTPError, LLMError) as exc:
+            logger.warning("stream interrupted: %s", exc)
+            yield _format_sse(
+                "error",
+                {"reason": "stream_failed", "detail": str(exc) or type(exc).__name__},
+            )
+            return
+
+        # [c] finalize — output filter, persist, done.
+        full_reply = "".join(reply_buf)
+        filtered_reply, leaked = filter_output(
+            full_reply,
+            body.lang,
+            settings,
+            enforce_length=(source == "rag"),
+        )
+        if leaked:
+            yield _format_sse(
+                "done",
+                {
+                    "source": "fallback_declined",
+                    "session_id": session_id,
+                    "reason": "output_filter",
+                },
+            )
+            return
+        try:
+            await store.append_turn(session_id, body.message, filtered_reply)
+        except Exception:
+            logger.exception("session persist failed")
+        yield _format_sse(
+            "done",
+            {"source": source, "session_id": session_id},
+        )
+
+    return _build_sse_response(event_stream(), cookie_response)

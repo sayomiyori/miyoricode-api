@@ -55,21 +55,55 @@ docker compose up --build
 | Health | [http://localhost:8000/health](http://localhost:8000/health) |
 | Chat | `POST /chat` |
 
-## `POST /chat`
+## `POST /chat` (SSE)
 
-```json
-{
-  "message": "Tell me about your projects",
-  "lang": "en",
-  "session_id": null
-}
+The endpoint is `text/event-stream`. The card / attachments ride in the first
+event so the UI can render them before any tokens arrive; the assistant reply
+streams in token chunks after that.
+
+```bash
+curl -N -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message":"Tell me about your projects","lang":"en","session_id":null}'
 ```
 
+Request body is unchanged: `{ message, lang, session_id }`.
+
+### Event order
+
+1. `event: metadata` — always first. `card` and `attachments` depend only on
+   `(message, lang)`; they are computed before the LLM call and emitted
+   immediately. `source` is `"structured"` or `"rag"`.
+2. `event: token` — repeated. Each chunk is a text fragment of the assistant
+   reply, in order.
+3. `event: done` — final. `source` may have been demoted to
+   `"fallback_declined"` with `reason: "output_filter"` if the leak guard
+   tripped on the complete text.
+4. `event: error` — only if the LLM stream broke mid-flight (network error,
+   timeout, or malformed chunk). No `done` is sent after `error`; the
+   connection is closed.
+
+### Schemas
+
+```text
+event: metadata
+data: {"card": <ChatCard|null>, "attachments": <ChatAttachments|null>, "session_id": "<uuid4>", "source": "structured"|"rag"}
+
+event: token
+data: {"text": "<chunk>"}
+
+event: done
+data: {"source": "structured"|"rag"|"fallback_declined", "session_id": "<uuid4>", "reason"?: "output_filter"}
+
+event: error
+data: {"reason": "stream_failed", "detail": "<string>"}
+```
+
+`ChatCard` and `ChatAttachments` keep the same shape as before:
+
 ```json
 {
-  "reply": "...",
-  "session_id": "uuid4",
-  "source": "structured" | "rag" | "fallback_declined",
   "card": {
     "type": "project_carousel",
     "items": [
@@ -99,7 +133,7 @@ docker compose up --build
 
 `card` and `attachments` are mutually exclusive overlays:
 
-- `card` (`project_carousel`, ten projects: six client + four pet) is filled only for the **general Projects shortcut** (`Tell me about your projects` / `расскажи о проектах`). Text reply stays as before. Pet-project `screenshots` are `raw.githubusercontent.com` URLs; Velox shots stay frontend-relative.
+- `card` (`project_carousel`, ten projects: six client + four pet) is filled only for the **general Projects shortcut** (`Tell me about your projects` / `расскажи о проектах`). Text reply stays as before. `description` is selected from bilingual config (`description_ru` / `description_en`) by request `lang`. `category` and `technologies` are language-invariant English labels. Pet-project `screenshots` are `raw.githubusercontent.com` URLs; Velox shots stay frontend-relative.
 - `attachments` is filled only when the **user message** names a project that has media in `app/tools/project_media.py` (currently Velox / велокс). Image `url` values are frontend-relative paths; this API does not host the files.
 - A named project (`Velox`, `SaaSAiMenu`, …) never gets the carousel. `fallback_declined` and 429 always send both as `null`.
 
@@ -107,7 +141,7 @@ docker compose up --build
 - `session_id`: UUID4 from the client is kept; anything else is dropped and the server issues a new id. Same rule for the cookie. Redis keys are never arbitrary strings.
 - Cookie: `HttpOnly`, `SameSite=Lax`, `Secure` off locally (`COOKIE_SECURE=false`).
 
-Rate-limit 429s still return JSON `{ reply, session_id, source, card, attachments }` so the frontend can show them as a chat bubble.
+Rate-limit 429s still return JSON `{ reply, session_id, source, card, attachments }` so the frontend can show them as a chat bubble (they do **not** flow through the SSE endpoint — slowapi short-circuits before the handler runs).
 
 ## Guardrails
 

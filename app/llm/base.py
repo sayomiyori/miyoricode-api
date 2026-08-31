@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 
 class LLMError(Exception):
@@ -17,4 +18,9 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def generate(self, messages: list[dict[str, str]]) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stream_generate(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+        """Yield text chunks as they arrive from the provider."""
         raise NotImplementedError
