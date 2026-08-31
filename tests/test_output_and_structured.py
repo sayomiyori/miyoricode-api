@@ -1,11 +1,16 @@
+import re
+
 from app.config import Settings
 from app.guardrail.output_filter import filter_output
 from app.guardrail.system_prompt import CANARY
+from app.tools.project_media import PROJECT_CAROUSEL
 from app.tools.structured_answers import (
     match_attachments,
     match_project_carousel,
     match_structured,
 )
+
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
 def test_output_filter_catches_canary():
@@ -217,16 +222,51 @@ def test_carousel_on_general_projects_shortcut():
         "projects",
         "проекты",
     ):
-        payload = match_project_carousel(message)
+        payload = match_project_carousel(message, lang="ru")
         assert payload is not None, message
         _assert_project_carousel(payload)
 
 
 def test_carousel_null_for_named_project_and_freeform():
-    assert match_project_carousel("Tell me about Velox") is None
-    assert match_project_carousel("tell me about Velox") is None
-    assert match_project_carousel("Tell me about SaaSAiMenu") is None
-    assert match_project_carousel("расскажи про SaaSAiMenu") is None
-    assert match_project_carousel("расскажи про Velox") is None
-    assert match_project_carousel("how did you design the RAG chunk overlap?") is None
-    assert match_project_carousel("skills") is None
+    assert match_project_carousel("Tell me about Velox", lang="en") is None
+    assert match_project_carousel("tell me about Velox", lang="en") is None
+    assert match_project_carousel("Tell me about SaaSAiMenu", lang="en") is None
+    assert match_project_carousel("расскажи про SaaSAiMenu", lang="ru") is None
+    assert match_project_carousel("расскажи про Velox", lang="ru") is None
+    assert match_project_carousel("how did you design the RAG chunk overlap?", lang="en") is None
+    assert match_project_carousel("skills", lang="en") is None
+
+
+def test_carousel_items_have_bilingual_descriptions():
+    assert len(PROJECT_CAROUSEL) == 10
+    for item in PROJECT_CAROUSEL:
+        assert item.description_ru
+        assert item.description_en
+        assert item.description_ru != item.description_en
+        assert _CYRILLIC.search(item.description_ru)
+        assert not _CYRILLIC.search(item.description_en)
+        assert item.localized_description("ru") == item.description_ru
+        assert item.localized_description("en") == item.description_en
+
+
+def test_carousel_payload_picks_description_by_lang():
+    ru = match_project_carousel("проекты", lang="ru")
+    en = match_project_carousel("projects", lang="en")
+    assert ru is not None and en is not None
+    ru_by_id = {item["id"]: item for item in ru["items"]}
+    en_by_id = {item["id"]: item for item in en["items"]}
+    assert {item.id: item.description_ru for item in PROJECT_CAROUSEL} == {
+        item_id: item["description"] for item_id, item in ru_by_id.items()
+    }
+    assert {item.id: item.description_en for item in PROJECT_CAROUSEL} == {
+        item_id: item["description"] for item_id, item in en_by_id.items()
+    }
+    assert "ВЭД" in ru_by_id["amocrm"]["description"]
+    assert "foreign trade / import-export" in en_by_id["amocrm"]["description"]
+    assert "VED" not in en_by_id["amocrm"]["description"]
+    assert "ВЭД" not in en_by_id["amocrm"]["description"]
+    for ru_item, en_item in zip(ru["items"], en["items"], strict=True):
+        assert ru_item["category"] == en_item["category"]
+        assert ru_item["technologies"] == en_item["technologies"]
+        assert not _CYRILLIC.search(ru_item["category"])
+        assert not any(_CYRILLIC.search(tech) for tech in ru_item["technologies"])
