@@ -29,3 +29,5 @@ Thumbs.db
 
 # docker
 *.log
+scripts/probe_chat_*.json
+scripts/probe_*.txt
