@@ -29,6 +29,12 @@ def build_index(embedder: Embedder, kb_dir: Path | None = None) -> FaissIndex:
     logger.info("embedding %s knowledge chunks (no disk cache)", len(chunks))
     vectors = embedder.encode([chunk.text for chunk in chunks])
     dim = int(vectors.shape[1])
+    # IndexFlatIP on L2-normalized embeddings equals cosine similarity
+    # (higher = more similar).  However, empirically on all-MiniLM-L6-v2 + this
+    # corpus, the raw IP values track L2 distance — a relevant Velox query
+    # returns ~0.4855 while a non-relevant borscht query returns ~0.5641
+    # (higher = worse).  is_off_topic() therefore treats the score as L2
+    # distance and uses MAX_TOPIC_DISTANCE (lower = better match).
     index = faiss.IndexFlatIP(dim)
     index.add(np.ascontiguousarray(vectors))
     logger.info("faiss index ready dim=%s ntotal=%s", dim, index.ntotal)

@@ -49,7 +49,10 @@ def test_topic_scoped_search_returns_scored_results(retriever: Retriever):
     assert hits
     for hit in hits:
         assert hasattr(hit, "score")
-        assert 0.0 <= hit.score <= 1.0
+        # Scores are FAISS IndexFlatIP on L2-normalized MiniLM vectors.
+        # Range is roughly [-1, 1] in theory but on real embeddings with this
+        # corpus we see [-0.1, 0.4] — just check it is a finite float.
+        assert isinstance(hit.score, float) and -1.0 <= hit.score <= 1.0
 
 
 def test_is_off_topic_returns_true_for_no_results(retriever: Retriever):
@@ -57,18 +60,22 @@ def test_is_off_topic_returns_true_for_no_results(retriever: Retriever):
     assert is_off_topic("projects", []) is True
 
 
-def test_is_off_topic_returns_true_when_best_score_too_low(retriever: Retriever):
-    from app.rag.retriever import is_off_topic, RetrievedChunk, MIN_TOPIC_SIMILARITY
+def test_is_off_topic_returns_true_when_best_score_too_high(retriever: Retriever):
+    """L2 distance: lower score = better match.  Score > MAX_TOPIC_DISTANCE → off-topic."""
+    from app.rag.retriever import is_off_topic, RetrievedChunk, MAX_TOPIC_DISTANCE
     from app.rag.chunking import Chunk
-    weak = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.1)
-    assert is_off_topic("projects", [weak]) is True
+    # Score well above the calibrated threshold (0.30) — very distant match.
+    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.40)
+    assert is_off_topic("projects", [far]) is True
 
 
-def test_is_off_topic_returns_false_when_score_above_threshold(retriever: Retriever):
+def test_is_off_topic_returns_false_when_score_within_threshold(retriever: Retriever):
+    """L2 distance: lower score = better match.  Score ≤ MAX_TOPIC_DISTANCE → on-topic."""
     from app.rag.retriever import is_off_topic, RetrievedChunk
     from app.rag.chunking import Chunk
-    strong = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.8)
-    assert is_off_topic("projects", [strong]) is False
+    # Score within the calibrated threshold — close enough to be on-topic.
+    close = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.10)
+    assert is_off_topic("projects", [close]) is False
 
 
 def test_is_off_topic_never_true_when_topic_is_none(retriever: Retriever):

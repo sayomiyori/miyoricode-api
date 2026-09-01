@@ -22,7 +22,7 @@ from app.guardrail.system_prompt import (
 from app.limiter import limiter
 from app.llm.cascade import LLMCascade
 from app.llm.base import LLMError
-from app.rag.retriever import Retriever, is_off_topic, MIN_TOPIC_SIMILARITY
+from app.rag.retriever import Retriever, is_off_topic
 from app.session.store import SessionStore
 from app.tools.structured_answers import (
     match_attachments,

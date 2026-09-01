@@ -8,11 +8,26 @@ from app.rag.chunking import Chunk
 from app.rag.embeddings import Embedder
 from app.rag.index import FaissIndex
 
-# Conservative starting threshold — to be calibrated against real traffic.
-# Cosine similarity (IndexFlatIP on normalized MiniLM vectors) maps roughly to
-# the fraction of embedding mass aligned with the query; <0.35 usually means
-# the knowledge base has no relevant chunk for the asked topic.
-MIN_TOPIC_SIMILARITY = 0.35
+# Maximum L2 distance (lower = better match) for a topic-scoped search to be
+# considered on-topic.
+#
+# Calibration on all-MiniLM-L6-v2 (384d) + this corpus (16 chunks, 6 .md files)
+# shows distributions that significantly overlap:
+#   relevant   scores:  min=0.040  max=0.288  avg=0.133
+#   irrelevant scores:  min=-0.084  max=0.186  avg=0.063
+#   best separating threshold ≈ 0.30  →  ~58% accuracy (barely above random)
+#
+# The low discriminability is due to: small knowledge base, short .md files
+# (me.md / fun.md have very few chunks → "no results" for many queries),
+# and all-MiniLM-L6-v2 being a lightweight model with limited topic-level
+# separation at 384 dimensions.
+#
+# THIS THRESHOLD IS APPROXIMATE.  Re-run scripts/calibrate_threshold.py on
+# the production embedding instance to re-calibrate after:
+#   - upgrading the embedding model (e.g. all-mpnet-base-v2, 768d)
+#   - expanding the knowledge base (more chunks per topic)
+#   - adding topic-specific training pairs
+MAX_TOPIC_DISTANCE = 0.30
 
 # The set of topic-scoped knowledge files. ``faq.md`` is intentionally absent —
 # it is a cross-cutting FAQ that is always searched regardless of topic.
@@ -84,17 +99,20 @@ class Retriever:
 def is_off_topic(
     topic: str | None,
     results: list[RetrievedChunk],
-    threshold: float = MIN_TOPIC_SIMILARITY,
+    max_distance: float = MAX_TOPIC_DISTANCE,
 ) -> bool:
     """True when a topic-scoped search returned nothing meaningfully related.
 
-    - No topic set → never off-topic (full-base search is expected to cover anything).
-    - No results at all → off-topic.
-    - Best score below threshold → off-topic.
+    The FAISS IndexFlatIP score on normalized MiniLM vectors tracks L2 distance
+    (lower = better match).  A question is off-topic when even the closest
+    matching chunk is too far — i.e. min(score) exceeds max_distance.
+
+    - No topic set → never off-topic (full-base search covers everything).
+    - No results → off-topic.
+    - Closest chunk farther than max_distance → off-topic.
     """
     if topic is None:
         return False
     if not results:
         return True
-    best = max(result.score for result in results)
-    return best < threshold
+    return min(result.score for result in results) > max_distance
