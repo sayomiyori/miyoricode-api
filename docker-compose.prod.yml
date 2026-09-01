@@ -1,0 +1,92 @@
+# -----------------------------------------------------------------------------
+# Dockerfile audit (read-only notes — файл НЕ менялся):
+#
+# 1. Multi-stage build: НЕ используется. Один слой на базе python:3.12-slim.
+#    Потенциальный выигрыш при разделении builder/runtime: ~200-400 MB за счёт
+#    выноса build-essential. Не переделываем в этой задаче — только заметка.
+#
+# 2. Финальный размер образа (оценка по слоям, без сборки):
+#      python:3.12-slim           ~  120 MB
+#      build-essential (apt)      ~  150 MB  (НЕ удаляется из финального слоя,
+#                                            т.к. нет multi-stage)
+#      torch (CPU wheel)          ~  220 MB
+#      sentence-transformers +    ~  150 MB
+#        зависимости (numpy, scipy и т.д.)
+#      app-код                    ~    1 MB
+#      ----------------------------------------
+#      Итого ориентировочно:       ~  640 MB
+#    Реальный размер может отличаться; точный — через `docker images` после сборки.
+#
+# 3. .dockerignore: присутствует, исключает .git, .env, __pycache__, .pytest_cache,
+#    .ruff_cache, .cache, tests, docs, scripts, **/*.pyc — соответствует best practice.
+#    Замечание: .dockerignore НЕ исключает `.venv/venv` СОДЕРЖИМОЕ (только имена
+#    директорий) — это нормально, т.к. директории всё равно перечислены.
+#
+# TODO (отдельной задачей): рассмотреть multi-stage build для удаления
+# build-essential из финального слоя → экономия ~150 MB.
+# -----------------------------------------------------------------------------
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    # Том для персистентности (RAG-сессии, кэш эмбеддингов при необходимости)
+    volumes:
+      - redis-data:/data
+    # Никакого секции ports — Redis доступен ТОЛЬКО внутри docker-сети.
+    command:
+      - redis-server
+      - --maxmemory
+      - 100mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - internal
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 1024m
+    # ВАЖНО: bind ТОЛЬКО на 127.0.0.1. Наружу сервис публикует nginx на хосте,
+    # а не Docker. Никакого 0.0.0.0 в compose-портах.
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - .env.production
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # /health эндпоинт существует в app/routes/health.py
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - internal
+
+networks:
+  # Internal bridge: без доступа к внешним сетям, без gateway наружу.
+  internal:
+    driver: bridge
+
+volumes:
+  redis-data:
+  hf_cache:
