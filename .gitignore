@@ -31,3 +31,4 @@ Thumbs.db
 *.log
 scripts/probe_chat_*.json
 scripts/probe_*.txt
+.env.production
