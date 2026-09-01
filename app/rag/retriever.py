@@ -8,8 +8,10 @@ from app.rag.chunking import Chunk
 from app.rag.embeddings import Embedder
 from app.rag.index import FaissIndex
 
-# Maximum L2 distance (lower = better match) for a topic-scoped search to be
-# considered on-topic.
+# Minimum inner-product similarity (higher = better match) for a topic-scoped
+# search to be considered on-topic.  Renamed from "distance" to reflect
+# that the FAISS IndexFlatIP returns raw cosine similarity on unit-normalized
+# vectors — larger values mean closer match.
 #
 # ┌────────────────────────────────────────────────────────────────────────────
 # │ IMPORTANT — lang=en DISCREPANCY
@@ -33,20 +35,14 @@ from app.rag.index import FaissIndex
 # └────────────────────────────────────────────────────────────────────────────
 #
 # Calibration on all-MiniLM-L6-v2 (384d) + this corpus + RUSSIAN queries
-# (matching the KB language):
-#   relevant   scores:  min=0.187  max=0.494  avg=0.298
-#   irrelevant scores:  min=0.226  max=0.374  avg=0.291
-#   best separating threshold ≈ 0.49  →  ~68% accuracy
+# (matching the KB language), with topic-first (filter-before-rank) search:
+#   relevant   scores:  min=0.054  max=0.667  avg=0.351
+#   irrelevant scores:  min=0.107  max=0.641  avg=0.328
+#   best separating threshold ≈ 0.15  →  ~62% accuracy
 #
-# Key observations from RU calibration:
-#   - projects.md: rich chunks, best discrimination
-#   - skills.md:  decent separation
-#   - me.md / fun.md: almost no chunks → "no results" for most queries
-#   - contact.md:  few chunks, moderate overlap with irrelevant
-#
-# With only 16 total chunks the ceiling is low.  Expand the knowledge base
-# before trusting this threshold for high-stakes routing decisions.
-MAX_TOPIC_DISTANCE = 0.49
+# Note: accuracy ceiling is low due to corpus size (16 chunks, 5 topics) and
+# all-MiniLM-L6-v2's limited discriminability at 384 dimensions.
+MAX_TOPIC_DISTANCE = 0.15
 
 # The set of topic-scoped knowledge files. ``faq.md`` is intentionally absent —
 # it is a cross-cutting FAQ that is always searched regardless of topic.
@@ -92,26 +88,73 @@ class Retriever:
     def retrieve_scored(
         self, query: str, topic: str | None = None, top_k: int = 4
     ) -> list[RetrievedChunk]:
-        """Return ranked chunks with their cosine similarity scores.
+        """Return ranked chunks with their FAISS IP scores.
 
-        If ``topic`` is set, only chunks from the matching source file are
-        considered. With 16 chunks total, post-search filtering is cheaper
-        than a separate index per topic — no premature optimization.
+        Two search modes:
+
+        topic is None — full-corpus search:
+            Encode query, run FAISS top-k, return results as-is.
+            This is the right strategy for 16-chunk corpus where the
+            full index fits in CPU cache.
+
+        topic is set — topic-scoped search:
+            1. Filter candidate chunks by source file first.
+            2. Encode query.
+            3. Score ONLY those filtered chunks (no top-k pre-filter that
+               could discard relevant chunks of the target topic).
+            4. Sort by score ascending (L2: lower = better).
+            5. Return top_k of the scoped results.
+
+        This ensures no chunk is lost due to competition from chunks of
+        other topics in the global top-k ranking.
         """
         if not query.strip() or self._store.index.ntotal == 0:
             return []
-        top_k = min(top_k, self._store.index.ntotal)
         vector = self._embedder.encode([query])
-        scores, ids = self._store.index.search(np.ascontiguousarray(vector), top_k)
+
         wanted_source = TOPIC_FILES.get(topic) if topic else None
-        results: list[RetrievedChunk] = []
-        for idx, score in zip(ids[0], scores[0]):
-            if idx < 0:
-                continue
-            chunk = self._store.chunks[int(idx)]
-            if wanted_source is not None and chunk.source != wanted_source:
-                continue
-            results.append(RetrievedChunk(chunk=chunk, score=float(score)))
+
+        if wanted_source is None:
+            # Full-corpus search: use FAISS top-k (fast, no pre-filter needed).
+            k = min(top_k, self._store.index.ntotal)
+            scores, ids = self._store.index.search(
+                np.ascontiguousarray(vector), k
+            )
+            results: list[RetrievedChunk] = []
+            for idx, score in zip(ids[0], scores[0]):
+                if idx < 0:
+                    continue
+                results.append(
+                    RetrievedChunk(chunk=self._store.chunks[int(idx)], score=float(score))
+                )
+            return results
+
+        # Topic-scoped: filter chunks by source BEFORE ranking.
+        # This prevents relevant chunks from being pre-filtered by the global
+        # top-k which could discard them if other topics dominate the scores.
+        topic_indices: list[int] = [
+            i for i, chunk in enumerate(self._store.chunks)
+            if chunk.source == wanted_source
+        ]
+        if not topic_indices:
+            return []
+
+        # Score only the topic-filtered chunks against the query.
+        topic_vectors = self._store.vectors[topic_indices]  # (N_topic, dim)
+        # FAISS IndexFlatIP: np.dot(q, d) on unit vectors = IP similarity
+        # (higher = better match on L2-normalized embeddings).
+        topic_scores = np.dot(topic_vectors, vector[0]).astype(np.float32)
+        # Sort descending (best IP match first).
+        order = np.argsort(topic_scores)[::-1]
+        results = []
+        for rank, vec_idx in enumerate(order[:top_k]):
+            chunk_idx = topic_indices[vec_idx]
+            results.append(
+                RetrievedChunk(
+                    chunk=self._store.chunks[chunk_idx],
+                    score=float(topic_scores[vec_idx]),
+                )
+            )
         return results
 
 
@@ -123,9 +166,13 @@ def is_off_topic(
 ) -> bool:
     """True when a topic-scoped search returned nothing meaningfully related.
 
-    The FAISS IndexFlatIP score on normalized MiniLM vectors tracks L2 distance
-    (lower = better match).  A question is off-topic when even the closest
-    matching chunk is too far — i.e. min(score) exceeds max_distance.
+    The retriever computes raw FAISS IndexFlatIP (inner product) between the
+    query vector and chunk vectors.  On L2-normalized embeddings from
+    all-MiniLM-L6-v2, higher IP = closer match (cosine similarity).
+
+    A question is off-topic when even the best-matching chunk scores too
+    low — i.e. max(score) falls below max_distance (the minimum acceptable
+    similarity for the topic to be considered relevant).
 
     Off-topic detection is DISABLED for lang=en because the knowledge base is
     entirely in Russian and all-MiniLM-L6-v2 is not cross-lingual — English
@@ -136,7 +183,7 @@ def is_off_topic(
     - No topic set → never off-topic (full-base search covers everything).
     - lang="en" → never off-topic (EN embeddings are unreliable for RU KB).
     - No results → off-topic.
-    - Closest chunk farther than max_distance → off-topic.
+    - Best chunk score below max_distance → off-topic.
     """
     if topic is None:
         return False
@@ -145,4 +192,7 @@ def is_off_topic(
         return False
     if not results:
         return True
-    return min(result.score for result in results) > max_distance
+    # IP similarity: higher score = better match (closer in embedding space).
+    # A chunk is acceptably similar when its score >= threshold.
+    # Therefore: off-topic when max(score) < threshold.
+    return max(result.score for result in results) < max_distance

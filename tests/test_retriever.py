@@ -60,21 +60,21 @@ def test_is_off_topic_returns_true_for_no_results(retriever: Retriever):
     assert is_off_topic("projects", []) is True
 
 
-def test_is_off_topic_returns_true_when_best_score_too_high(retriever: Retriever):
-    """L2 distance: lower score = better match.  Score > MAX_TOPIC_DISTANCE → off-topic."""
+def test_is_off_topic_returns_true_when_best_score_too_low(retriever: Retriever):
+    """IP similarity: higher = better match.  Score < MAX_TOPIC_DISTANCE → off-topic."""
     from app.rag.retriever import is_off_topic, RetrievedChunk, MAX_TOPIC_DISTANCE
     from app.rag.chunking import Chunk
-    # Score above the RU-calibrated threshold (0.49) — distant match.
-    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.60)
+    # Score below the RU-calibrated threshold (0.15) — too dissimilar to be on-topic.
+    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.05)
     assert is_off_topic("projects", [far], lang="ru") is True
 
 
 def test_is_off_topic_returns_false_when_score_within_threshold(retriever: Retriever):
-    """L2 distance: lower score = better match.  Score ≤ MAX_TOPIC_DISTANCE → on-topic."""
+    """IP similarity: higher = better match.  Score >= MAX_TOPIC_DISTANCE → on-topic."""
     from app.rag.retriever import is_off_topic, RetrievedChunk
     from app.rag.chunking import Chunk
-    # Score well within the RU-calibrated threshold — close enough to be on-topic.
-    close = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.20)
+    # Score at the RU-calibrated threshold (0.15) — just on-topic.
+    close = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.30)
     assert is_off_topic("projects", [close], lang="ru") is False
 
 
@@ -92,3 +92,31 @@ def test_is_off_topic_disabled_for_english(retriever: Retriever):
 def test_is_off_topic_never_true_when_topic_is_none(retriever: Retriever):
     from app.rag.retriever import is_off_topic
     assert is_off_topic(None, []) is False
+
+
+def test_each_topic_returns_non_empty_for_relevant_query(retriever: Retriever):
+    """Every topic must return at least one chunk for a clearly relevant query.
+
+    This verifies that the topic-first (filter-before-rank) search in
+    retrieve_scored() no longer loses relevant chunks to global top-k pre-filtering.
+    Uses real Russian queries that are known to match each topic.
+    """
+    topic_queries = {
+        "projects": "Расскажи про Velox",
+        "skills":  "Ты знаешь Python async",
+        "me":       "Как тебя зовут",
+        "fun":      "Чем занимаешься помимо работы",
+        "contact":  "Как с тобой связаться",
+    }
+    for topic, query in topic_queries.items():
+        results = retriever.retrieve_scored(query, topic=topic, top_k=8)
+        assert results, (
+            f"topic={topic!r} query={query!r} returned 0 results — "
+            "topic-first search may be dropping relevant chunks"
+        )
+        # All returned chunks must belong to the correct topic file.
+        wanted_source = f"{topic}.md"
+        assert all(r.chunk.source == wanted_source for r in results), (
+            f"topic={topic!r} returned chunks from wrong file(s): "
+            f"{set(r.chunk.source for r in results)}"
+        )

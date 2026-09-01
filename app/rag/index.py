@@ -19,6 +19,7 @@ KB_DIR = Path(__file__).resolve().parent / "knowledge_base"
 class FaissIndex:
     index: faiss.Index
     chunks: list[Chunk]
+    vectors: np.ndarray  # chunk vectors in index order, for topic-scoped search
 
 
 def build_index(embedder: Embedder, kb_dir: Path | None = None) -> FaissIndex:
@@ -38,4 +39,4 @@ def build_index(embedder: Embedder, kb_dir: Path | None = None) -> FaissIndex:
     index = faiss.IndexFlatIP(dim)
     index.add(np.ascontiguousarray(vectors))
     logger.info("faiss index ready dim=%s ntotal=%s", dim, index.ntotal)
-    return FaissIndex(index=index, chunks=chunks)
+    return FaissIndex(index=index, chunks=chunks, vectors=vectors)
