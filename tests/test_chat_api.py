@@ -508,20 +508,20 @@ def test_topic_field_missing_is_fine(client: TestClient, cascade: FakeCascade):
     assert cascade.calls
 
 
-def test_off_topic_question_returns_canned_redirect_without_llm(
+def test_off_topic_question_within_topic_calls_llm(
     client: TestClient, cascade: FakeCascade
 ):
-    """Asking a genuinely off-topic question within a topic scope returns
-    the canned redirect and never calls the LLM cascade.
+    """Asking a genuinely off-topic question within a topic scope (e.g. borscht
+    recipe with topic=projects) now calls the LLM and lets it handle the
+    redirect via the topic-scoped system-prompt instruction.
 
-    Note: lang="ru" is required because off-topic detection is disabled for
-    lang="en" (RU KB + EN query embeddings are unreliable without a
-    translation layer — see MAX_TOPIC_DISTANCE docstring in retriever.py).
+    Previously the is_off_topic gate blocked the LLM call and returned a
+    canned "topic_mismatch" redirect.  After removing that gate, the LLM is
+    always called and source="rag" (not "topic_mismatch").
     """
     response = client.post(
         "/chat",
         json={
-            # Recipe of borscht has nothing to do with projects.
             "message": "рецепт борща",
             "lang": "ru",
             "session_id": None,
@@ -531,36 +531,38 @@ def test_off_topic_question_returns_canned_redirect_without_llm(
     assert response.status_code == 200
     events = _read_sse_events(response)
     metadata = _metadata(events)
-    assert metadata["source"] == "topic_mismatch"
-    # No LLM call at all.
-    assert cascade.calls == []
+    # source is now "rag" — no separate topic_mismatch branch
+    assert metadata["source"] == "rag"
+    # LLM was called (FakeCascade records every call)
+    assert cascade.calls
     done = _done(events)
-    assert done["source"] == "topic_mismatch"
-    # The redirect text must be present — Russian redirect uses "проекты", not "projects".
-    text = _events_text(events)
-    assert "проекты" in text
-    assert "борщ" not in text
+    assert done["source"] == "rag"
 
 
-def test_off_topic_russian_returns_russian_redirect(
+def test_topic_scoped_polite_redirect_in_system_prompt(
     client: TestClient, cascade: FakeCascade
 ):
-    """Off-topic in Russian must emit the Russian canned text."""
+    """When a topic is set, the system prompt must contain the polite redirect
+    instruction so the LLM knows to redirect rather than say 'I don't know'.
+    """
     response = client.post(
         "/chat",
         json={
             "message": "рецепт борща",
             "lang": "ru",
             "session_id": None,
-            "topic": "skills",
+            "topic": "projects",
         },
     )
     assert response.status_code == 200
-    events = _read_sse_events(response)
-    assert _metadata(events)["source"] == "topic_mismatch"
-    assert cascade.calls == []
-    text = _events_text(events)
-    assert "навыки" in text or "skills" in text.lower()
+    # First system message is the build_system_prompt output
+    system_content = cascade.calls[0][0]["content"]
+    # Must contain the Russian redirect instruction for the projects topic
+    assert "проекты" in system_content
+    assert "переключиться" in system_content.lower() or "switch" in system_content.lower()
+    # Must NOT contain a hard numeric threshold reference (the is_off_topic gate)
+    assert "MAX_TOPIC_DISTANCE" not in system_content
+    assert "0.15" not in system_content
 
 
 @pytest.mark.skipif(

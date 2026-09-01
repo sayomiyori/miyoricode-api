@@ -22,7 +22,7 @@ from app.guardrail.system_prompt import (
 from app.limiter import limiter
 from app.llm.cascade import LLMCascade
 from app.llm.base import LLMError
-from app.rag.retriever import Retriever, is_off_topic
+from app.rag.retriever import Retriever
 from app.session.store import SessionStore
 from app.tools.structured_answers import (
     match_attachments,
@@ -48,14 +48,6 @@ SSE_HEADERS = {
     "Connection": "keep-alive",
 }
 
-# Human-readable topic labels for the off-topic canned redirect.
-TOPIC_LABELS: dict[str, dict[str, str]] = {
-    "me": {"ru": "обо мне", "en": "about me"},
-    "projects": {"ru": "проекты", "en": "projects"},
-    "skills": {"ru": "навыки", "en": "skills"},
-    "fun": {"ru": "личное", "en": "fun facts"},
-    "contact": {"ru": "контакты", "en": "contact"},
-}
 
 
 class ChatRequest(BaseModel):
@@ -104,7 +96,7 @@ class ChatCard(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
-    source: Literal["structured", "rag", "fallback_declined", "topic_mismatch"]
+    source: Literal["structured", "rag", "fallback_declined"]
     card: ChatCard | None = None
     attachments: ChatAttachments | None = None
 
@@ -205,34 +197,16 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     store: SessionStore = request.app.state.session_store
     history = await store.get_history(session_id)
 
-    # 2a) Topic-scoped off-topic detection — before any LLM call.
+    # 2a) Topic-scoped retrieval — topic-first filtering is handled inside
+    # retrieve_scored; there is no hard numerical gate here any more.
+    # Off-topic detection was removed after calibration showed only 62% accuracy
+    # ceiling (relevant avg=0.351, irrelevant avg=0.328, ranges heavily
+    # overlapping).  The LLM is now trusted to handle off-topic questions
+    # gracefully via the topic-scoped system-prompt instruction.
     retriever: Retriever = request.app.state.retriever
     retrieved = retriever.retrieve_scored(
         body.message, topic=body.topic, top_k=settings.retrieve_k
     )
-    if is_off_topic(body.topic, retrieved, lang=body.lang):
-        labels = TOPIC_LABELS.get(body.topic, {}) if body.topic else {}
-        topic_label = labels.get(body.lang, labels.get("en", ""))
-        redirect_ru = f"Это я отвечаю только про {topic_label}. Если хочешь спросить о другом — переключись на соответствующую вкладку выше."
-        redirect_en = f"I only answer about {topic_label} here. For other questions, switch to the relevant tab above."
-        redirect_text = redirect_ru if body.lang == "ru" else redirect_en
-
-        async def _topic_mismatch_stream() -> AsyncIterator[bytes]:
-            yield _format_sse(
-                "metadata",
-                {
-                    "card": None,
-                    "attachments": None,
-                    "session_id": session_id,
-                    "source": "topic_mismatch",
-                },
-            )
-            yield _format_sse("token", {"text": redirect_text})
-            yield _format_sse(
-                "done",
-                {"source": "topic_mismatch", "session_id": session_id},
-            )
-        return _build_sse_response(_topic_mismatch_stream(), cookie_response)
 
     structured = match_structured(body.message)
     if structured is not None:
@@ -251,7 +225,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
         knowledge_prefix = "Retrieved knowledge:\n"
 
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": build_system_prompt(body.lang, settings, source=source)},
+        {"role": "system", "content": build_system_prompt(body.lang, settings, source=source, topic=body.topic)},
         {
             "role": "system",
             "content": knowledge_prefix + (context or "(empty)"),
