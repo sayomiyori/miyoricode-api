@@ -150,7 +150,15 @@ def _build_sse_response(
     set_cookie() directly — use a normal Response to compute cookie headers
     first, then merge them in.
     """
-    headers = {**dict(cookie_response.headers), **SSE_HEADERS}
+    headers = dict(SSE_HEADERS)
+    # Pull ONLY the Set-Cookie header from cookie_response. Copying the full
+    # headers dict would also drag in defaults from the empty Response
+    # (content-length: 0, content-type: text/plain). Uvicorn then sees a fixed
+    # Content-Length: 0 and aborts as soon as the generator yields real bytes
+    # ("Response content longer than Content-Length"), breaking SSE.
+    set_cookie_value = cookie_response.headers.get("set-cookie")
+    if set_cookie_value is not None:
+        headers["set-cookie"] = set_cookie_value
     return StreamingResponse(generator, media_type="text/event-stream", headers=headers)
 
 
