@@ -22,7 +22,7 @@ from app.guardrail.system_prompt import (
 from app.limiter import limiter
 from app.llm.cascade import LLMCascade
 from app.llm.base import LLMError
-from app.rag.retriever import Retriever
+from app.rag.retriever import Retriever, is_off_topic, MIN_TOPIC_SIMILARITY
 from app.session.store import SessionStore
 from app.tools.structured_answers import (
     match_attachments,
@@ -48,11 +48,21 @@ SSE_HEADERS = {
     "Connection": "keep-alive",
 }
 
+# Human-readable topic labels for the off-topic canned redirect.
+TOPIC_LABELS: dict[str, dict[str, str]] = {
+    "me": {"ru": "обо мне", "en": "about me"},
+    "projects": {"ru": "проекты", "en": "projects"},
+    "skills": {"ru": "навыки", "en": "skills"},
+    "fun": {"ru": "личное", "en": "fun facts"},
+    "contact": {"ru": "контакты", "en": "contact"},
+}
+
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_PAYLOAD_CHARS)
     lang: Literal["en", "ru"]
     session_id: str | None = None
+    topic: Literal["me", "projects", "skills", "fun", "contact"] | None = None
 
 
 class AttachmentImage(BaseModel):
@@ -94,7 +104,7 @@ class ChatCard(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
-    source: Literal["structured", "rag", "fallback_declined"]
+    source: Literal["structured", "rag", "fallback_declined", "topic_mismatch"]
     card: ChatCard | None = None
     attachments: ChatAttachments | None = None
 
@@ -151,11 +161,6 @@ def _build_sse_response(
     first, then merge them in.
     """
     headers = dict(SSE_HEADERS)
-    # Pull ONLY the Set-Cookie header from cookie_response. Copying the full
-    # headers dict would also drag in defaults from the empty Response
-    # (content-length: 0, content-type: text/plain). Uvicorn then sees a fixed
-    # Content-Length: 0 and aborts as soon as the generator yields real bytes
-    # ("Response content longer than Content-Length"), breaking SSE.
     set_cookie_value = cookie_response.headers.get("set-cookie")
     if set_cookie_value is not None:
         headers["set-cookie"] = set_cookie_value
@@ -200,6 +205,35 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     store: SessionStore = request.app.state.session_store
     history = await store.get_history(session_id)
 
+    # 2a) Topic-scoped off-topic detection — before any LLM call.
+    retriever: Retriever = request.app.state.retriever
+    retrieved = retriever.retrieve_scored(
+        body.message, topic=body.topic, top_k=settings.retrieve_k
+    )
+    if is_off_topic(body.topic, retrieved):
+        labels = TOPIC_LABELS.get(body.topic, {}) if body.topic else {}
+        topic_label = labels.get(body.lang, labels.get("en", ""))
+        redirect_ru = f"Это я отвечаю только про {topic_label}. Если хочешь спросить о другом — переключись на соответствующую вкладку выше."
+        redirect_en = f"I only answer about {topic_label} here. For other questions, switch to the relevant tab above."
+        redirect_text = redirect_ru if body.lang == "ru" else redirect_en
+
+        async def _topic_mismatch_stream() -> AsyncIterator[bytes]:
+            yield _format_sse(
+                "metadata",
+                {
+                    "card": None,
+                    "attachments": None,
+                    "session_id": session_id,
+                    "source": "topic_mismatch",
+                },
+            )
+            yield _format_sse("token", {"text": redirect_text})
+            yield _format_sse(
+                "done",
+                {"source": "topic_mismatch", "session_id": session_id},
+            )
+        return _build_sse_response(_topic_mismatch_stream(), cookie_response)
+
     structured = match_structured(body.message)
     if structured is not None:
         context = structured.content
@@ -209,8 +243,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
             "Copy every URL and proper name character-for-character:\n"
         )
     else:
-        retriever: Retriever = request.app.state.retriever
-        chunks = retriever.retrieve(body.message, k=settings.retrieve_k)
+        chunks = [r.chunk for r in retrieved]
         context = "\n\n".join(
             f"source={chunk.source} heading={chunk.heading}\n{chunk.text}" for chunk in chunks
         )

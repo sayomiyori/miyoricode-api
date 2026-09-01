@@ -469,3 +469,112 @@ def test_sse_streams_token_events_before_done(client: TestClient):
     done_idx = event_names.index("done")
     assert metadata_idx < done_idx - 1
     assert any(ev == "token" for ev in event_names[metadata_idx + 1:done_idx])
+
+
+# ---------------------------------------------------------------------------
+# Topic-scoped search & off-topic redirect tests
+# ---------------------------------------------------------------------------
+
+
+def test_topic_field_accepted_without_topic_none(client: TestClient, cascade: FakeCascade):
+    """topic=None means full-base search — LLM must be called normally."""
+    response = client.post(
+        "/chat",
+        json={
+            "message": "Tell me about Velox",
+            "lang": "en",
+            "session_id": None,
+            "topic": None,
+        },
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] in {"rag", "structured"}
+    assert cascade.calls  # LLM was called
+    assert _done(events)["source"] in {"rag", "structured"}
+
+
+def test_topic_field_missing_is_fine(client: TestClient, cascade: FakeCascade):
+    """Backward compatibility: requests without topic field work as before."""
+    response = client.post(
+        "/chat",
+        json={"message": "Tell me about Velox", "lang": "en", "session_id": None},
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] in {"rag", "structured"}
+    assert cascade.calls
+
+
+def test_off_topic_question_returns_canned_redirect_without_llm(
+    client: TestClient, cascade: FakeCascade
+):
+    """Asking a genuinely off-topic question within a topic scope returns
+    the canned redirect and never calls the LLM cascade."""
+    response = client.post(
+        "/chat",
+        json={
+            # Recipe of borscht has nothing to do with projects.
+            "message": "how to cook borscht beet soup recipe",
+            "lang": "en",
+            "session_id": None,
+            "topic": "projects",
+        },
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "topic_mismatch"
+    # No LLM call at all.
+    assert cascade.calls == []
+    done = _done(events)
+    assert done["source"] == "topic_mismatch"
+    # The redirect text must be present.
+    text = _events_text(events)
+    assert "projects" in text.lower()
+    assert "borscht" not in text.lower()
+
+
+def test_off_topic_russian_returns_russian_redirect(
+    client: TestClient, cascade: FakeCascade
+):
+    """Off-topic in Russian must emit the Russian canned text."""
+    response = client.post(
+        "/chat",
+        json={
+            "message": "рецепт борща",
+            "lang": "ru",
+            "session_id": None,
+            "topic": "skills",
+        },
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    assert _metadata(events)["source"] == "topic_mismatch"
+    assert cascade.calls == []
+    text = _events_text(events)
+    assert "навыки" in text or "skills" in text.lower()
+
+
+@pytest.mark.skipif(
+    os.environ.get("SKIP_RAG") == "1",
+    reason="requires real retriever for topic-scoped search",
+)
+def test_topic_with_valid_question_calls_llm(client: TestClient, cascade: FakeCascade):
+    """When the question IS relevant to the scoped topic, LLM is called normally."""
+    response = client.post(
+        "/chat",
+        json={
+            "message": "Tell me about Velox",
+            "lang": "en",
+            "session_id": None,
+            "topic": "projects",
+        },
+    )
+    assert response.status_code == 200
+    events = _read_sse_events(response)
+    metadata = _metadata(events)
+    assert metadata["source"] == "rag"
+    assert cascade.calls  # LLM was called
