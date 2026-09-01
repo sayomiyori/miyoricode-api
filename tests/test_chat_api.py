@@ -512,13 +512,18 @@ def test_off_topic_question_returns_canned_redirect_without_llm(
     client: TestClient, cascade: FakeCascade
 ):
     """Asking a genuinely off-topic question within a topic scope returns
-    the canned redirect and never calls the LLM cascade."""
+    the canned redirect and never calls the LLM cascade.
+
+    Note: lang="ru" is required because off-topic detection is disabled for
+    lang="en" (RU KB + EN query embeddings are unreliable without a
+    translation layer — see MAX_TOPIC_DISTANCE docstring in retriever.py).
+    """
     response = client.post(
         "/chat",
         json={
             # Recipe of borscht has nothing to do with projects.
-            "message": "how to cook borscht beet soup recipe",
-            "lang": "en",
+            "message": "рецепт борща",
+            "lang": "ru",
             "session_id": None,
             "topic": "projects",
         },
@@ -531,10 +536,10 @@ def test_off_topic_question_returns_canned_redirect_without_llm(
     assert cascade.calls == []
     done = _done(events)
     assert done["source"] == "topic_mismatch"
-    # The redirect text must be present.
+    # The redirect text must be present — Russian redirect uses "проекты", not "projects".
     text = _events_text(events)
-    assert "projects" in text.lower()
-    assert "borscht" not in text.lower()
+    assert "проекты" in text
+    assert "борщ" not in text
 
 
 def test_off_topic_russian_returns_russian_redirect(

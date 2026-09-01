@@ -4,7 +4,17 @@ Run manually (not in CI) with:
     python scripts/calibrate_threshold.py
 
 Purpose: find the best separating threshold between relevant and irrelevant
-queries for each topic, using the real embedding model.
+queries for each topic, using REAL Russian queries that match the language
+of the knowledge base (all .md files are written in Russian).
+
+IMPORTANT: This calibration is ONLY valid for lang=ru queries.
+For lang=en, off-topic detection is DISABLED because the embeddings are
+trained on RU text and EN queries will systematically underperform.
+See retriever.py and chat.py for the lang=en guard.
+
+The calibration data below is collected with all-MiniLM-L6-v2 embeddings.
+Re-run this script after changing the embedding model or expanding the
+knowledge base.
 """
 from __future__ import annotations
 
@@ -23,44 +33,65 @@ KB = Path(__file__).resolve().parents[1] / "app" / "rag" / "knowledge_base"
 store = build_index(embedder, kb_dir=KB)
 retriever = Retriever(embedder, store)
 
-# topic -> list of (label, query, expected_on_topic)
+# All calibration queries are in RUSSIAN — matching the knowledge base language.
+# Each tuple: (label, query_text, expected_on_topic)
 calibration = {
     "projects": [
-        ("velox-platform",   "Velox AI running coach",           True),
-        ("project-tech",     "What tech stack do you use",        True),
-        ("eventpipe",       "Tell me about EventPipe",           True),
-        ("saasaimenu",      "Tell me about SaaSAiMenu",          True),
-        ("borscht",         "how to cook borscht recipe",        False),
-        ("weather",         "weather forecast crimea",            False),
-        ("movie-opinion",   "what is your favorite movie",      False),
+        # Relevant — asking about specific projects or tech stack
+        ("velox-platform",      "Расскажи про Velox",                         True),
+        ("tech-stack",          "Какой у тебя стек в проектах",               True),
+        ("saasaimenu",          "Что такое SaaSAiMenu",                       True),
+        ("ai-chaina",           "Расскажи про AI-CHAINA",                    True),
+        ("eventpipe",           "Про EventPipe поподробнее",                   True),
+        ("authfortress",        "Что такое AuthFortress",                    True),
+        ("neuroclassifier",     "Про NeuroClassifier расскажи",               True),
+        # Irrelevant — topics that have nothing to do with projects
+        ("borscht",             "Как приготовить борщ",                      False),
+        ("weather",             "Какая погода в Симферополе",                False),
+        ("movie",               "Посоветуй фильм на вечер",                  False),
+        ("recipe-okroshka",     "Рецепт окрошки",                           False),
     ],
     "skills": [
-        ("python-async",    "Do you know Python async",          True),
-        ("tech-list",       "What technologies do you use",      True),
-        ("docker",          "Can you work with Docker",          True),
-        ("fastapi",         "Do you know FastAPI",               True),
-        ("borscht-skill",   "borscht recipe cooking",           False),
-        ("weather-skill",   "weather in simferopol",            False),
+        # Relevant — asking about technologies and skills
+        ("python-async",        "Ты знаешь Python async",                    True),
+        ("tech-stack-skills",   "Какие технологии ты используешь",            True),
+        ("docker-skills",       "Умеешь с Docker работать",                  True),
+        ("fastapi-skills",      "Знаешь FastAPI",                           True),
+        ("postgres-skills",     "Работаешь с PostgreSQL",                   True),
+        ("ai-skills",           "Занимаешься AI/LLM интеграциями",           True),
+        # Irrelevant
+        ("borscht-skills",      "Рецепт борща",                            False),
+        ("movie-skills",        "Лучшие фильмы 2024",                        False),
+        ("weather-skills",      "Погода на неделю",                         False),
     ],
     "me": [
-        ("who-are-you",     "Who are you",                      True),
-        ("your-name",       "What is your name",                True),
-        ("relocate",        "Are you ready to relocate",        True),
-        ("location",        "Where do you live",                 True),
-        ("borscht-me",      "how to cook borscht",              False),
-        ("movie-me",        "best movie 2024",                  False),
+        # Relevant — asking about Matvey personally
+        ("who-are-you",         "Кто ты такой",                             True),
+        ("your-name",           "Как тебя зовут",                           True),
+        ("relocate",            "Готов ли ты к переезду",                   True),
+        ("location",            "Где ты живёшь",                            True),
+        ("education",           "Где учился",                                True),
+        # Irrelevant
+        ("borscht-me",          "Рецепт борща",                            False),
+        ("movie-me",            "Какой фильм посмотреть",                   False),
+        ("weather-me",          "Будет ли дождь",                          False),
     ],
     "fun": [
-        ("fun-facts",       "Tell me about fun facts",          True),
-        ("hobbies",         "What are your hobbies",             True),
-        ("music",           "what music do you listen to",       True),
-        ("borscht-fun",     "borscht recipe ingredients",        False),
+        # Relevant — personal/hobby questions (few chunks in fun.md)
+        ("hobbies",             "Чем занимаешься помимо работы",             True),
+        ("music",               "Какую музыку слушаешь",                    True),
+        # Irrelevant
+        ("borscht-fun",         "Рецепт борща",                            False),
+        ("tech-fun",            "Лучшие практики Python",                   False),
     ],
     "contact": [
-        ("contact-how",     "How can I contact you",            True),
-        ("telegram",        "What is your Telegram",            True),
-        ("email-contact",   "do you have email",                True),
-        ("borscht-contact", "borscht recipe",                   False),
+        # Relevant — how to reach out
+        ("how-to-contact",      "Как с тобой связаться",                    True),
+        ("telegram",            "Есть телеграм",                            True),
+        ("email-contact",       "Можно написать на почту",                 True),
+        # Irrelevant
+        ("borscht-contact",     "Рецепт борща",                            False),
+        ("weather-contact",     "Погода в Крыму",                          False),
     ],
 }
 
@@ -74,7 +105,7 @@ def run_calibration() -> None:
     print(
         "topic       | label                 | expected | best_score | source        | off_topic | ok?"
     )
-    print("-" * 95)
+    print("-" * 96)
 
     for topic, pairs in calibration.items():
         for label, query, expected in pairs:
@@ -138,7 +169,7 @@ def run_calibration() -> None:
             f"(accuracy {best_acc*100:.1f}%)"
         )
 
-        # Also try midpoint between max relevant and min irrelevant
+        # Midpoint between max relevant and min irrelevant
         max_rel = max(all_relevant)
         min_irel = min(all_irrelevant)
         if max_rel < min_irel:
@@ -147,7 +178,7 @@ def run_calibration() -> None:
             tn = sum(1 for s in all_irrelevant if s > midpoint)
             acc = (tp + tn) / (len(all_relevant) + len(all_irrelevant))
             print(
-                f"Midpoint (max_rel={max_rel:.4f} < min_irel={min_irel:.4f}): "
+                f"Gap-based midpoint (max_rel={max_rel:.4f} < min_irel={min_irel:.4f}): "
                 f"{midpoint:.4f}  (accuracy {acc*100:.1f}%)"
             )
 

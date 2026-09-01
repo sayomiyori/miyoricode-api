@@ -64,18 +64,29 @@ def test_is_off_topic_returns_true_when_best_score_too_high(retriever: Retriever
     """L2 distance: lower score = better match.  Score > MAX_TOPIC_DISTANCE → off-topic."""
     from app.rag.retriever import is_off_topic, RetrievedChunk, MAX_TOPIC_DISTANCE
     from app.rag.chunking import Chunk
-    # Score well above the calibrated threshold (0.30) — very distant match.
-    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.40)
-    assert is_off_topic("projects", [far]) is True
+    # Score above the RU-calibrated threshold (0.49) — distant match.
+    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.60)
+    assert is_off_topic("projects", [far], lang="ru") is True
 
 
 def test_is_off_topic_returns_false_when_score_within_threshold(retriever: Retriever):
     """L2 distance: lower score = better match.  Score ≤ MAX_TOPIC_DISTANCE → on-topic."""
     from app.rag.retriever import is_off_topic, RetrievedChunk
     from app.rag.chunking import Chunk
-    # Score within the calibrated threshold — close enough to be on-topic.
-    close = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.10)
-    assert is_off_topic("projects", [close]) is False
+    # Score well within the RU-calibrated threshold — close enough to be on-topic.
+    close = RetrievedChunk(chunk=Chunk(text="Velox AI platform", source="projects.md", heading="Velox"), score=0.20)
+    assert is_off_topic("projects", [close], lang="ru") is False
+
+
+def test_is_off_topic_disabled_for_english(retriever: Retriever):
+    """Off-topic gate is disabled for lang=en because the RU KB + EN query is unreliable."""
+    from app.rag.retriever import is_off_topic, RetrievedChunk
+    from app.rag.chunking import Chunk
+    # Same far chunk that would be off-topic for RU — but EN always passes.
+    far = RetrievedChunk(chunk=Chunk(text="foo", source="projects.md", heading=""), score=0.99)
+    assert is_off_topic("projects", [far], lang="en") is False
+    # Also with an empty result list.
+    assert is_off_topic("projects", [], lang="en") is False
 
 
 def test_is_off_topic_never_true_when_topic_is_none(retriever: Retriever):

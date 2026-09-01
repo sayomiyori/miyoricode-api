@@ -11,23 +11,42 @@ from app.rag.index import FaissIndex
 # Maximum L2 distance (lower = better match) for a topic-scoped search to be
 # considered on-topic.
 #
-# Calibration on all-MiniLM-L6-v2 (384d) + this corpus (16 chunks, 6 .md files)
-# shows distributions that significantly overlap:
-#   relevant   scores:  min=0.040  max=0.288  avg=0.133
-#   irrelevant scores:  min=-0.084  max=0.186  avg=0.063
-#   best separating threshold ≈ 0.30  →  ~58% accuracy (barely above random)
+# ┌────────────────────────────────────────────────────────────────────────────
+# │ IMPORTANT — lang=en DISCREPANCY
+# │ The knowledge base (all .md files) is written entirely in RUSSIAN.
+# │ all-MiniLM-L6-v2 is NOT a cross-lingual model.  When body.lang == "en",
+# │ the raw English query is embedded directly against Russian chunks WITHOUT
+# │ any translation step — this systematically degrades retrieval quality.
+# │
+# │ For lang=en, the off-topic gate is therefore DISABLED: is_off_topic()
+# │ returns False regardless of scores.  The LLM cascade still receives the
+# │ retrieved chunks (potentially poor quality) but the user never sees a
+# │ misleading "I only answer about X" canned redirect for a legitimate
+# │ English question.
+# │
+# │ To properly support lang=en, add a translation layer before retrieval:
+# │   - Option A (simpler): translate EN query → RU before encode()
+# │   - Option B (better): replace all-MiniLM-L6-v2 with a cross-lingual
+# │     model such as multilingual-e5-base or paraphrase-multilingual-MiniLM
+# │ After either fix, re-run scripts/calibrate_threshold.py and re-enable
+# │ the off-topic gate for lang=en.
+# └────────────────────────────────────────────────────────────────────────────
 #
-# The low discriminability is due to: small knowledge base, short .md files
-# (me.md / fun.md have very few chunks → "no results" for many queries),
-# and all-MiniLM-L6-v2 being a lightweight model with limited topic-level
-# separation at 384 dimensions.
+# Calibration on all-MiniLM-L6-v2 (384d) + this corpus + RUSSIAN queries
+# (matching the KB language):
+#   relevant   scores:  min=0.187  max=0.494  avg=0.298
+#   irrelevant scores:  min=0.226  max=0.374  avg=0.291
+#   best separating threshold ≈ 0.49  →  ~68% accuracy
 #
-# THIS THRESHOLD IS APPROXIMATE.  Re-run scripts/calibrate_threshold.py on
-# the production embedding instance to re-calibrate after:
-#   - upgrading the embedding model (e.g. all-mpnet-base-v2, 768d)
-#   - expanding the knowledge base (more chunks per topic)
-#   - adding topic-specific training pairs
-MAX_TOPIC_DISTANCE = 0.30
+# Key observations from RU calibration:
+#   - projects.md: rich chunks, best discrimination
+#   - skills.md:  decent separation
+#   - me.md / fun.md: almost no chunks → "no results" for most queries
+#   - contact.md:  few chunks, moderate overlap with irrelevant
+#
+# With only 16 total chunks the ceiling is low.  Expand the knowledge base
+# before trusting this threshold for high-stakes routing decisions.
+MAX_TOPIC_DISTANCE = 0.49
 
 # The set of topic-scoped knowledge files. ``faq.md`` is intentionally absent —
 # it is a cross-cutting FAQ that is always searched regardless of topic.
@@ -99,6 +118,7 @@ class Retriever:
 def is_off_topic(
     topic: str | None,
     results: list[RetrievedChunk],
+    lang: str = "ru",
     max_distance: float = MAX_TOPIC_DISTANCE,
 ) -> bool:
     """True when a topic-scoped search returned nothing meaningfully related.
@@ -107,11 +127,21 @@ def is_off_topic(
     (lower = better match).  A question is off-topic when even the closest
     matching chunk is too far — i.e. min(score) exceeds max_distance.
 
+    Off-topic detection is DISABLED for lang=en because the knowledge base is
+    entirely in Russian and all-MiniLM-L6-v2 is not cross-lingual — English
+    queries systematically produce poor embeddings against Russian chunks,
+    making score-based gating unreliable.  See MAX_TOPIC_DISTANCE docstring for
+    details and the recommended fix (translation layer or cross-lingual model).
+
     - No topic set → never off-topic (full-base search covers everything).
+    - lang="en" → never off-topic (EN embeddings are unreliable for RU KB).
     - No results → off-topic.
     - Closest chunk farther than max_distance → off-topic.
     """
     if topic is None:
+        return False
+    # Disable off-topic gate for English — see MAX_TOPIC_DISTANCE docstring.
+    if lang == "en":
         return False
     if not results:
         return True

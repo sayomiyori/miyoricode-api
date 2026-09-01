@@ -210,7 +210,7 @@ async def chat(request: Request, body: ChatRequest) -> StreamingResponse:
     retrieved = retriever.retrieve_scored(
         body.message, topic=body.topic, top_k=settings.retrieve_k
     )
-    if is_off_topic(body.topic, retrieved):
+    if is_off_topic(body.topic, retrieved, lang=body.lang):
         labels = TOPIC_LABELS.get(body.topic, {}) if body.topic else {}
         topic_label = labels.get(body.lang, labels.get("en", ""))
         redirect_ru = f"Это я отвечаю только про {topic_label}. Если хочешь спросить о другом — переключись на соответствующую вкладку выше."
